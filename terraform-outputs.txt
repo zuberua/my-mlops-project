@@ -1,0 +1,5 @@
+github_actions_role_arn = "arn:aws:iam::138720056246:role/mlops-demo-github-actions-role"
+model_package_group_arn = "arn:aws:sagemaker:us-east-1:138720056246:model-package-group/mlops-demo-model-group"
+model_package_group_name = "mlops-demo-model-group"
+sagemaker_bucket_name = "sagemaker-mlops-demo-138720056246"
+sagemaker_execution_role_arn = "arn:aws:iam::138720056246:role/mlops-demo-sagemaker-execution-role"

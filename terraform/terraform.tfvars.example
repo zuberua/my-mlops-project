@@ -1,0 +1,10 @@
+aws_region  = "us-east-1"
+project_name = "mlops-demo"
+environment  = "dev"
+
+# Update these with your GitHub details
+github_org  = "your-github-org"
+github_repo = "your-repo-name"
+
+# Set to false if GitHub OIDC provider already exists in your account
+create_github_oidc_provider = false

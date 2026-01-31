@@ -1,0 +1,29 @@
+{
+  "samples": [
+    {
+      "input": "0.5,0.3,0.8,0.2",
+      "expected": "1",
+      "description": "Sample with positive class"
+    },
+    {
+      "input": "0.1,0.2,0.1,0.3",
+      "expected": "0",
+      "description": "Sample with negative class"
+    },
+    {
+      "input": "0.7,0.6,0.9,0.8",
+      "expected": "1",
+      "description": "High confidence positive"
+    },
+    {
+      "input": "0.2,0.1,0.2,0.1",
+      "expected": "0",
+      "description": "High confidence negative"
+    },
+    {
+      "input": "0.5,0.5,0.5,0.5",
+      "expected": null,
+      "description": "Boundary case"
+    }
+  ]
+}

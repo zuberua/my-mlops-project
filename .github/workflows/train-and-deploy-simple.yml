@@ -56,10 +56,10 @@ jobs:
           # Create data directory
           mkdir -p data
           
-          # Download data
-          aws s3 cp s3://${BUCKET}/${PROJECT_NAME}/input/data.csv data/data.csv || {
+          # Download data or create sample
+          if ! aws s3 cp s3://${BUCKET}/${PROJECT_NAME}/input/data.csv data/data.csv; then
             echo "Data not found, creating sample data"
-            python -c "
+            python3 << 'EOF'
 import pandas as pd
 import numpy as np
 from sklearn.datasets import make_classification
@@ -71,15 +71,15 @@ df = pd.DataFrame(X)
 df.insert(0, 'target', y)
 df.to_csv('data/data.csv', index=False, header=False)
 print('Sample data created')
-            "
-          }
+EOF
+          fi
           
           echo "Data ready"
           ls -lh data/
 
       - name: Preprocess data
         run: |
-          python -c "
+          python3 << 'EOF'
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
@@ -108,11 +108,11 @@ val_df.to_csv('data/validation.csv', index=False, header=False)
 test_df.to_csv('data/test.csv', index=False, header=False)
 
 print('Data preprocessing complete')
-          "
+EOF
 
       - name: Train model
         run: |
-          python -c "
+          python3 << 'EOF'
 import pandas as pd
 import xgboost as xgb
 import pickle
@@ -173,12 +173,12 @@ with open('model/training_metrics.json', 'w') as f:
     json.dump(training_metrics, f, indent=2)
 
 print(f'Training complete. Best AUC: {best_score:.4f}')
-          "
+EOF
 
       - name: Evaluate model
         id: evaluate
         run: |
-          python -c "
+          python3 << 'EOF'
 import pandas as pd
 import xgboost as xgb
 import json
@@ -205,7 +205,7 @@ recall = recall_score(y_test, y_pred, average='binary')
 f1 = f1_score(y_test, y_pred, average='binary')
 auc = roc_auc_score(y_test, y_pred_proba)
 
-print(f'\\nEvaluation Results:')
+print(f'\nEvaluation Results:')
 print(f'  Accuracy:  {accuracy:.4f}')
 print(f'  Precision: {precision:.4f}')
 print(f'  Recall:    {recall:.4f}')
@@ -228,11 +228,11 @@ with open('model/evaluation.json', 'w') as f:
 with open('evaluation.json', 'w') as f:
     json.dump(evaluation, f)
 
-print(f'\\nModel evaluation complete')
-          "
+print(f'\nModel evaluation complete')
+EOF
           
           # Set outputs for next jobs
-          ACCURACY=$(python -c "import json; print(json.load(open('evaluation.json'))['accuracy'])")
+          ACCURACY=$(python3 -c "import json; print(json.load(open('evaluation.json'))['accuracy'])")
           echo "accuracy=$ACCURACY" >> $GITHUB_OUTPUT
           echo "Accuracy: $ACCURACY"
 
@@ -268,16 +268,29 @@ print(f'\\nModel evaluation complete')
 
       - name: Create deployment summary
         run: |
+          ACCURACY=$(python3 -c "import json; print(f\"{json.load(open('evaluation.json'))['accuracy']:.4f}\")")
+          PRECISION=$(python3 -c "import json; print(f\"{json.load(open('evaluation.json'))['precision']:.4f}\")")
+          RECALL=$(python3 -c "import json; print(f\"{json.load(open('evaluation.json'))['recall']:.4f}\")")
+          F1=$(python3 -c "import json; print(f\"{json.load(open('evaluation.json'))['f1_score']:.4f}\")")
+          AUC=$(python3 -c "import json; print(f\"{json.load(open('evaluation.json'))['auc']:.4f}\")")
+          ACCURACY_NUM=$(python3 -c "import json; print(json.load(open('evaluation.json'))['accuracy'])")
+          
+          if (( $(echo "$ACCURACY_NUM > 0.8" | bc -l) )); then
+            STATUS="✅ Ready for deployment"
+          else
+            STATUS="❌ Below threshold (0.8)"
+          fi
+          
           cat >> $GITHUB_STEP_SUMMARY << EOF
           ## 🎯 Model Training Complete
           
-          **Accuracy:** $(python -c "import json; print(f\"{json.load(open('evaluation.json'))['accuracy']:.4f}\")")
-          **Precision:** $(python -c "import json; print(f\"{json.load(open('evaluation.json'))['precision']:.4f}\")")
-          **Recall:** $(python -c "import json; print(f\"{json.load(open('evaluation.json'))['recall']:.4f}\")")
-          **F1 Score:** $(python -c "import json; print(f\"{json.load(open('evaluation.json'))['f1_score']:.4f}\")")
-          **AUC:** $(python -c "import json; print(f\"{json.load(open('evaluation.json'))['auc']:.4f}\")")
+          **Accuracy:** $ACCURACY
+          **Precision:** $PRECISION
+          **Recall:** $RECALL
+          **F1 Score:** $F1
+          **AUC:** $AUC
           
-          **Status:** $(if [ $(python -c "import json; print(json.load(open('evaluation.json'))['accuracy'])") \> 0.8 ]; then echo "✅ Ready for deployment"; else echo "❌ Below threshold (0.8)"; fi)
+          **Status:** $STATUS
           EOF
 
   deploy-staging:
@@ -318,15 +331,14 @@ print(f'\\nModel evaluation complete')
 
       - name: Deploy to SageMaker Staging
         run: |
-          python -c "
+          python3 << 'EOF'
 import boto3
 import json
 import time
 
 sagemaker = boto3.client('sagemaker')
 account_id = boto3.client('sts').get_caller_identity()['Account']
-region = '${AWS_REGION}'
-role_arn = '${secrets.SAGEMAKER_EXECUTION_ROLE_ARN}'
+region = 'us-east-1'
 
 # Read model path
 with open('model_path.txt', 'r') as f:
@@ -335,7 +347,7 @@ with open('model_path.txt', 'r') as f:
 print(f'Deploying model from: {model_path}')
 
 # Create model
-model_name = '${PROJECT_NAME}-staging-' + time.strftime('%Y%m%d-%H%M%S')
+model_name = 'mlops-demo-simple-staging-' + time.strftime('%Y%m%d-%H%M%S')
 container = f'683313688378.dkr.ecr.{region}.amazonaws.com/sagemaker-xgboost:1.5-1'
 
 print(f'Creating model: {model_name}')
@@ -343,13 +355,9 @@ sagemaker.create_model(
     ModelName=model_name,
     PrimaryContainer={
         'Image': container,
-        'ModelDataUrl': model_path + 'model.xgb',
-        'Environment': {
-            'SAGEMAKER_PROGRAM': 'inference.py',
-            'SAGEMAKER_SUBMIT_DIRECTORY': model_path
-        }
+        'ModelDataUrl': model_path + 'model.xgb'
     },
-    ExecutionRoleArn=role_arn
+    ExecutionRoleArn='arn:aws:iam::' + account_id + ':role/SageMakerExecutionRole'
 )
 
 # Create endpoint config
@@ -366,7 +374,7 @@ sagemaker.create_endpoint_config(
 )
 
 # Create or update endpoint
-endpoint_name = '${PROJECT_NAME}-staging'
+endpoint_name = 'mlops-demo-simple-staging'
 print(f'Deploying endpoint: {endpoint_name}')
 
 try:
@@ -392,11 +400,11 @@ with open('endpoint_info.json', 'w') as f:
         'endpoint_name': endpoint_name,
         'model_name': model_name
     }, f)
-          "
+EOF
 
       - name: Wait for endpoint
         run: |
-          python -c "
+          python3 << 'EOF'
 import boto3
 import json
 import time
@@ -426,11 +434,11 @@ while time.time() - start_time < max_wait:
     time.sleep(30)
 else:
     raise Exception('Endpoint deployment timed out')
-          "
+EOF
 
       - name: Test staging endpoint
         run: |
-          python -c "
+          python3 << 'EOF'
 import boto3
 import json
 import numpy as np
@@ -455,7 +463,7 @@ response = runtime.invoke_endpoint(
 prediction = response['Body'].read().decode()
 print(f'Test prediction: {prediction}')
 print('✅ Endpoint test successful!')
-          "
+EOF
 
       - name: Create staging summary
         run: |
@@ -505,15 +513,14 @@ print('✅ Endpoint test successful!')
 
       - name: Deploy to SageMaker Production
         run: |
-          python -c "
+          python3 << 'EOF'
 import boto3
 import json
 import time
 
 sagemaker = boto3.client('sagemaker')
 account_id = boto3.client('sts').get_caller_identity()['Account']
-region = '${AWS_REGION}'
-role_arn = '${secrets.SAGEMAKER_EXECUTION_ROLE_ARN}'
+region = 'us-east-1'
 
 # Read model path
 with open('model_path.txt', 'r') as f:
@@ -522,7 +529,7 @@ with open('model_path.txt', 'r') as f:
 print(f'Deploying model from: {model_path}')
 
 # Create model
-model_name = '${PROJECT_NAME}-production-' + time.strftime('%Y%m%d-%H%M%S')
+model_name = 'mlops-demo-simple-production-' + time.strftime('%Y%m%d-%H%M%S')
 container = f'683313688378.dkr.ecr.{region}.amazonaws.com/sagemaker-xgboost:1.5-1'
 
 print(f'Creating model: {model_name}')
@@ -532,7 +539,7 @@ sagemaker.create_model(
         'Image': container,
         'ModelDataUrl': model_path + 'model.xgb'
     },
-    ExecutionRoleArn=role_arn
+    ExecutionRoleArn='arn:aws:iam::' + account_id + ':role/SageMakerExecutionRole'
 )
 
 # Create endpoint config with autoscaling
@@ -549,7 +556,7 @@ sagemaker.create_endpoint_config(
 )
 
 # Create or update endpoint
-endpoint_name = '${PROJECT_NAME}-production'
+endpoint_name = 'mlops-demo-simple-production'
 print(f'Deploying endpoint: {endpoint_name}')
 
 try:
@@ -567,7 +574,7 @@ except:
     )
 
 print(f'✅ Production deployment initiated: {endpoint_name}')
-          "
+EOF
 
       - name: Create production summary
         run: |

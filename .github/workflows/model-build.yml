@@ -49,6 +49,8 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
+          pip list | grep -i sagemaker
+          python -c "import sagemaker; print(f'SageMaker version: {sagemaker.__version__ if hasattr(sagemaker, \"__version__\") else \"unknown\"}')"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4

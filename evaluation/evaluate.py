@@ -7,16 +7,13 @@ import os
 import sys
 import subprocess
 import tarfile
+
+# Install/upgrade dependencies before importing
+print("Installing required dependencies...")
+subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pandas>=2.0.0", "xgboost==1.7.6", "-q"])
+
 import pandas as pd
-
-# Install xgboost if not available
-try:
-    import xgboost as xgb
-except ImportError:
-    print("Installing xgboost...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "xgboost>=1.7.0"])
-    import xgboost as xgb
-
+import xgboost as xgb
 from sklearn.metrics import (
     accuracy_score,
     precision_score,

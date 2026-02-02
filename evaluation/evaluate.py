@@ -8,9 +8,9 @@ import sys
 import subprocess
 import tarfile
 
-# Install/upgrade dependencies before importing
-print("Installing required dependencies...")
-subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pandas>=2.0.0", "xgboost==1.7.6", "-q"])
+# Install xgboost compatible with the container's pandas 1.1.3
+print("Installing xgboost compatible with container environment...")
+subprocess.check_call([sys.executable, "-m", "pip", "install", "xgboost==1.3.3", "-q"])
 
 import pandas as pd
 import xgboost as xgb

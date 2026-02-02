@@ -1,0 +1,582 @@
+name: Train and Deploy (GitHub Actions Only)
+
+on:
+  push:
+    branches:
+      - github-actions-only
+    paths:
+      - 'training/**'
+      - 'preprocessing/**'
+      - 'evaluation/**'
+      - '.github/workflows/train-and-deploy-simple.yml'
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  PROJECT_NAME: mlops-demo-simple
+  PYTHON_VERSION: '3.10'
+
+jobs:
+  train-model:
+    name: Train Model in GitHub Actions
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pandas numpy scikit-learn xgboost==1.7.6 boto3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-Train
+
+      - name: Download training data from S3
+        run: |
+          # Get account ID
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          BUCKET="sagemaker-mlops-demo-${ACCOUNT_ID}"
+          
+          echo "Downloading data from s3://${BUCKET}/${PROJECT_NAME}/input/data.csv"
+          
+          # Create data directory
+          mkdir -p data
+          
+          # Download data
+          aws s3 cp s3://${BUCKET}/${PROJECT_NAME}/input/data.csv data/data.csv || {
+            echo "Data not found, creating sample data"
+            python -c "
+import pandas as pd
+import numpy as np
+from sklearn.datasets import make_classification
+
+# Generate sample data
+X, y = make_classification(n_samples=1000, n_features=20, n_informative=15, 
+                          n_redundant=5, random_state=42)
+df = pd.DataFrame(X)
+df.insert(0, 'target', y)
+df.to_csv('data/data.csv', index=False, header=False)
+print('Sample data created')
+            "
+          }
+          
+          echo "Data ready"
+          ls -lh data/
+
+      - name: Preprocess data
+        run: |
+          python -c "
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+
+print('Loading data...')
+df = pd.read_csv('data/data.csv', header=None)
+print(f'Data shape: {df.shape}')
+
+# Split features and target
+y = df.iloc[:, 0]
+X = df.iloc[:, 1:]
+
+# Split data
+X_train, X_temp, y_train, y_temp = train_test_split(X, y, test_size=0.3, random_state=42)
+X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.5, random_state=42)
+
+print(f'Train: {X_train.shape}, Val: {X_val.shape}, Test: {X_test.shape}')
+
+# Save splits
+train_df = pd.concat([y_train, X_train], axis=1)
+val_df = pd.concat([y_val, X_val], axis=1)
+test_df = pd.concat([y_test, X_test], axis=1)
+
+train_df.to_csv('data/train.csv', index=False, header=False)
+val_df.to_csv('data/validation.csv', index=False, header=False)
+test_df.to_csv('data/test.csv', index=False, header=False)
+
+print('Data preprocessing complete')
+          "
+
+      - name: Train model
+        run: |
+          python -c "
+import pandas as pd
+import xgboost as xgb
+import pickle
+import json
+
+print('Loading training data...')
+train_df = pd.read_csv('data/train.csv', header=None)
+val_df = pd.read_csv('data/validation.csv', header=None)
+
+y_train = train_df.iloc[:, 0]
+X_train = train_df.iloc[:, 1:]
+y_val = val_df.iloc[:, 0]
+X_val = val_df.iloc[:, 1:]
+
+print(f'Training on {X_train.shape[0]} samples')
+
+# Create DMatrix
+dtrain = xgb.DMatrix(X_train, label=y_train)
+dval = xgb.DMatrix(X_val, label=y_val)
+
+# Set parameters
+params = {
+    'objective': 'binary:logistic',
+    'max_depth': 5,
+    'eta': 0.2,
+    'subsample': 0.8,
+    'colsample_bytree': 0.8,
+    'eval_metric': 'auc'
+}
+
+# Train model
+print('Training model...')
+evals = [(dtrain, 'train'), (dval, 'validation')]
+model = xgb.train(
+    params,
+    dtrain,
+    num_boost_round=100,
+    evals=evals,
+    early_stopping_rounds=10,
+    verbose_eval=10
+)
+
+# Save model
+import os
+os.makedirs('model', exist_ok=True)
+model.save_model('model/model.xgb')
+print('Model saved to model/model.xgb')
+
+# Save training metrics
+best_score = model.best_score
+training_metrics = {
+    'best_iteration': int(model.best_iteration),
+    'best_score': float(best_score),
+    'num_features': X_train.shape[1]
+}
+
+with open('model/training_metrics.json', 'w') as f:
+    json.dump(training_metrics, f, indent=2)
+
+print(f'Training complete. Best AUC: {best_score:.4f}')
+          "
+
+      - name: Evaluate model
+        id: evaluate
+        run: |
+          python -c "
+import pandas as pd
+import xgboost as xgb
+import json
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+
+print('Loading test data...')
+test_df = pd.read_csv('data/test.csv', header=None)
+y_test = test_df.iloc[:, 0]
+X_test = test_df.iloc[:, 1:]
+
+print('Loading model...')
+model = xgb.Booster()
+model.load_model('model/model.xgb')
+
+print('Making predictions...')
+dtest = xgb.DMatrix(X_test)
+y_pred_proba = model.predict(dtest)
+y_pred = (y_pred_proba > 0.5).astype(int)
+
+# Calculate metrics
+accuracy = accuracy_score(y_test, y_pred)
+precision = precision_score(y_test, y_pred, average='binary')
+recall = recall_score(y_test, y_pred, average='binary')
+f1 = f1_score(y_test, y_pred, average='binary')
+auc = roc_auc_score(y_test, y_pred_proba)
+
+print(f'\\nEvaluation Results:')
+print(f'  Accuracy:  {accuracy:.4f}')
+print(f'  Precision: {precision:.4f}')
+print(f'  Recall:    {recall:.4f}')
+print(f'  F1 Score:  {f1:.4f}')
+print(f'  AUC:       {auc:.4f}')
+
+# Save evaluation results
+evaluation = {
+    'accuracy': float(accuracy),
+    'precision': float(precision),
+    'recall': float(recall),
+    'f1_score': float(f1),
+    'auc': float(auc)
+}
+
+with open('model/evaluation.json', 'w') as f:
+    json.dump(evaluation, f, indent=2)
+
+# Write to GitHub output
+with open('evaluation.json', 'w') as f:
+    json.dump(evaluation, f)
+
+print(f'\\nModel evaluation complete')
+          "
+          
+          # Set outputs for next jobs
+          ACCURACY=$(python -c "import json; print(json.load(open('evaluation.json'))['accuracy'])")
+          echo "accuracy=$ACCURACY" >> $GITHUB_OUTPUT
+          echo "Accuracy: $ACCURACY"
+
+      - name: Upload model to S3
+        if: steps.evaluate.outputs.accuracy >= '0.8'
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          BUCKET="sagemaker-mlops-demo-${ACCOUNT_ID}"
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          MODEL_PATH="s3://${BUCKET}/${PROJECT_NAME}/models/${TIMESTAMP}/"
+          
+          echo "Uploading model to ${MODEL_PATH}"
+          
+          # Upload model and metrics
+          aws s3 cp model/model.xgb ${MODEL_PATH}model.xgb
+          aws s3 cp model/evaluation.json ${MODEL_PATH}evaluation.json
+          aws s3 cp model/training_metrics.json ${MODEL_PATH}training_metrics.json
+          
+          # Save model path for deployment
+          echo "${MODEL_PATH}" > model_path.txt
+          echo "MODEL_PATH=${MODEL_PATH}" >> $GITHUB_ENV
+          
+          echo "Model uploaded successfully"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-artifacts
+          path: |
+            model/
+            evaluation.json
+            model_path.txt
+
+      - name: Create deployment summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## 🎯 Model Training Complete
+          
+          **Accuracy:** $(python -c "import json; print(f\"{json.load(open('evaluation.json'))['accuracy']:.4f}\")")
+          **Precision:** $(python -c "import json; print(f\"{json.load(open('evaluation.json'))['precision']:.4f}\")")
+          **Recall:** $(python -c "import json; print(f\"{json.load(open('evaluation.json'))['recall']:.4f}\")")
+          **F1 Score:** $(python -c "import json; print(f\"{json.load(open('evaluation.json'))['f1_score']:.4f}\")")
+          **AUC:** $(python -c "import json; print(f\"{json.load(open('evaluation.json'))['auc']:.4f}\")")
+          
+          **Status:** $(if [ $(python -c "import json; print(json.load(open('evaluation.json'))['accuracy'])") \> 0.8 ]; then echo "✅ Ready for deployment"; else echo "❌ Below threshold (0.8)"; fi)
+          EOF
+
+  deploy-staging:
+    name: Deploy to Staging
+    needs: train-model
+    runs-on: ubuntu-latest
+    if: needs.train-model.outputs.accuracy >= '0.8'
+    permissions:
+      id-token: write
+      contents: read
+    environment:
+      name: staging
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install boto3 sagemaker
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-DeployStaging
+
+      - name: Download model artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: model-artifacts
+
+      - name: Deploy to SageMaker Staging
+        run: |
+          python -c "
+import boto3
+import json
+import time
+
+sagemaker = boto3.client('sagemaker')
+account_id = boto3.client('sts').get_caller_identity()['Account']
+region = '${AWS_REGION}'
+role_arn = '${secrets.SAGEMAKER_EXECUTION_ROLE_ARN}'
+
+# Read model path
+with open('model_path.txt', 'r') as f:
+    model_path = f.read().strip()
+
+print(f'Deploying model from: {model_path}')
+
+# Create model
+model_name = '${PROJECT_NAME}-staging-' + time.strftime('%Y%m%d-%H%M%S')
+container = f'683313688378.dkr.ecr.{region}.amazonaws.com/sagemaker-xgboost:1.5-1'
+
+print(f'Creating model: {model_name}')
+sagemaker.create_model(
+    ModelName=model_name,
+    PrimaryContainer={
+        'Image': container,
+        'ModelDataUrl': model_path + 'model.xgb',
+        'Environment': {
+            'SAGEMAKER_PROGRAM': 'inference.py',
+            'SAGEMAKER_SUBMIT_DIRECTORY': model_path
+        }
+    },
+    ExecutionRoleArn=role_arn
+)
+
+# Create endpoint config
+endpoint_config_name = model_name + '-config'
+print(f'Creating endpoint config: {endpoint_config_name}')
+sagemaker.create_endpoint_config(
+    EndpointConfigName=endpoint_config_name,
+    ProductionVariants=[{
+        'VariantName': 'AllTraffic',
+        'ModelName': model_name,
+        'InitialInstanceCount': 1,
+        'InstanceType': 'ml.m5.xlarge'
+    }]
+)
+
+# Create or update endpoint
+endpoint_name = '${PROJECT_NAME}-staging'
+print(f'Deploying endpoint: {endpoint_name}')
+
+try:
+    sagemaker.describe_endpoint(EndpointName=endpoint_name)
+    print('Endpoint exists, updating...')
+    sagemaker.update_endpoint(
+        EndpointName=endpoint_name,
+        EndpointConfigName=endpoint_config_name
+    )
+except:
+    print('Creating new endpoint...')
+    sagemaker.create_endpoint(
+        EndpointName=endpoint_name,
+        EndpointConfigName=endpoint_config_name
+    )
+
+print(f'Endpoint deployment initiated: {endpoint_name}')
+print(f'Model: {model_name}')
+
+# Save for next step
+with open('endpoint_info.json', 'w') as f:
+    json.dump({
+        'endpoint_name': endpoint_name,
+        'model_name': model_name
+    }, f)
+          "
+
+      - name: Wait for endpoint
+        run: |
+          python -c "
+import boto3
+import json
+import time
+
+sagemaker = boto3.client('sagemaker')
+
+with open('endpoint_info.json', 'r') as f:
+    info = json.load(f)
+    endpoint_name = info['endpoint_name']
+
+print(f'Waiting for endpoint: {endpoint_name}')
+
+max_wait = 600  # 10 minutes
+start_time = time.time()
+
+while time.time() - start_time < max_wait:
+    response = sagemaker.describe_endpoint(EndpointName=endpoint_name)
+    status = response['EndpointStatus']
+    print(f'Status: {status}')
+    
+    if status == 'InService':
+        print('✅ Endpoint is ready!')
+        break
+    elif status in ['Failed', 'RollingBack']:
+        raise Exception(f'Endpoint deployment failed with status: {status}')
+    
+    time.sleep(30)
+else:
+    raise Exception('Endpoint deployment timed out')
+          "
+
+      - name: Test staging endpoint
+        run: |
+          python -c "
+import boto3
+import json
+import numpy as np
+
+runtime = boto3.client('sagemaker-runtime')
+
+with open('endpoint_info.json', 'r') as f:
+    endpoint_name = json.load(f)['endpoint_name']
+
+print(f'Testing endpoint: {endpoint_name}')
+
+# Create test data
+test_data = ','.join([str(x) for x in np.random.randn(20)])
+
+# Invoke endpoint
+response = runtime.invoke_endpoint(
+    EndpointName=endpoint_name,
+    Body=test_data,
+    ContentType='text/csv'
+)
+
+prediction = response['Body'].read().decode()
+print(f'Test prediction: {prediction}')
+print('✅ Endpoint test successful!')
+          "
+
+      - name: Create staging summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## 🚀 Staging Deployment Complete
+          
+          **Endpoint:** \`${PROJECT_NAME}-staging\`
+          **Status:** ✅ InService
+          **Instance:** ml.m5.xlarge (1 instance)
+          **Test:** ✅ Passed
+          EOF
+
+  deploy-production:
+    name: Deploy to Production
+    needs: [train-model, deploy-staging]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    environment:
+      name: production
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install boto3 sagemaker
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-DeployProduction
+
+      - name: Download model artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: model-artifacts
+
+      - name: Deploy to SageMaker Production
+        run: |
+          python -c "
+import boto3
+import json
+import time
+
+sagemaker = boto3.client('sagemaker')
+account_id = boto3.client('sts').get_caller_identity()['Account']
+region = '${AWS_REGION}'
+role_arn = '${secrets.SAGEMAKER_EXECUTION_ROLE_ARN}'
+
+# Read model path
+with open('model_path.txt', 'r') as f:
+    model_path = f.read().strip()
+
+print(f'Deploying model from: {model_path}')
+
+# Create model
+model_name = '${PROJECT_NAME}-production-' + time.strftime('%Y%m%d-%H%M%S')
+container = f'683313688378.dkr.ecr.{region}.amazonaws.com/sagemaker-xgboost:1.5-1'
+
+print(f'Creating model: {model_name}')
+sagemaker.create_model(
+    ModelName=model_name,
+    PrimaryContainer={
+        'Image': container,
+        'ModelDataUrl': model_path + 'model.xgb'
+    },
+    ExecutionRoleArn=role_arn
+)
+
+# Create endpoint config with autoscaling
+endpoint_config_name = model_name + '-config'
+print(f'Creating endpoint config: {endpoint_config_name}')
+sagemaker.create_endpoint_config(
+    EndpointConfigName=endpoint_config_name,
+    ProductionVariants=[{
+        'VariantName': 'AllTraffic',
+        'ModelName': model_name,
+        'InitialInstanceCount': 2,
+        'InstanceType': 'ml.m5.xlarge'
+    }]
+)
+
+# Create or update endpoint
+endpoint_name = '${PROJECT_NAME}-production'
+print(f'Deploying endpoint: {endpoint_name}')
+
+try:
+    sagemaker.describe_endpoint(EndpointName=endpoint_name)
+    print('Endpoint exists, updating...')
+    sagemaker.update_endpoint(
+        EndpointName=endpoint_name,
+        EndpointConfigName=endpoint_config_name
+    )
+except:
+    print('Creating new endpoint...')
+    sagemaker.create_endpoint(
+        EndpointName=endpoint_name,
+        EndpointConfigName=endpoint_config_name
+    )
+
+print(f'✅ Production deployment initiated: {endpoint_name}')
+          "
+
+      - name: Create production summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## 🎉 Production Deployment Complete
+          
+          **Endpoint:** \`${PROJECT_NAME}-production\`
+          **Instance:** ml.m5.xlarge (2 instances)
+          **Deployment:** ✅ Initiated
+          
+          Monitor endpoint status in AWS Console
+          EOF

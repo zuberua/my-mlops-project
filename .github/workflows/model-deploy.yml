@@ -1,0 +1,238 @@
+name: Model Deployment Pipeline
+
+on:
+  workflow_run:
+    workflows: ["Model Build Pipeline"]
+    types:
+      - completed
+    branches:
+      - main
+  repository_dispatch:
+    types: [model-approved]
+  workflow_dispatch:
+    inputs:
+      model_package_arn:
+        description: 'Model Package ARN to deploy'
+        required: true
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  AWS_REGION: us-east-1
+  SAGEMAKER_PROJECT_NAME: mlops-demo
+
+jobs:
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch'
+    permissions:
+      id-token: write
+      contents: read
+    environment:
+      name: staging
+      url: ${{ steps.deploy.outputs.endpoint_url }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install boto3 sagemaker
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-DeployStaging
+
+      - name: Get Latest Approved Model
+        id: model
+        run: |
+          python scripts/get_latest_model.py \
+            --project-name ${{ env.SAGEMAKER_PROJECT_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --status Approved
+          
+          echo "model_package_arn=$(cat model_package_arn.txt)" >> $GITHUB_OUTPUT
+
+      - name: Deploy to Staging
+        id: deploy
+        run: |
+          python deployment/deploy_endpoint.py \
+            --model-package-arn ${{ steps.model.outputs.model_package_arn }} \
+            --endpoint-name ${{ env.SAGEMAKER_PROJECT_NAME }}-staging \
+            --instance-type ml.m5.xlarge \
+            --instance-count 1 \
+            --region ${{ env.AWS_REGION }}
+          
+          echo "endpoint_name=$(cat endpoint_name.txt)" >> $GITHUB_OUTPUT
+          echo "endpoint_url=https://console.aws.amazon.com/sagemaker/home?region=${{ env.AWS_REGION }}#/endpoints/$(cat endpoint_name.txt)" >> $GITHUB_OUTPUT
+
+      - name: Wait for Endpoint
+        run: |
+          python deployment/wait_endpoint.py \
+            --endpoint-name ${{ steps.deploy.outputs.endpoint_name }} \
+            --region ${{ env.AWS_REGION }} \
+            --timeout 900
+
+      - name: Test Staging Endpoint
+        id: test
+        run: |
+          python tests/test_endpoint.py \
+            --endpoint-name ${{ steps.deploy.outputs.endpoint_name }} \
+            --test-data tests/test_data.json \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-test-results
+          path: test_results.json
+
+      - name: Create Deployment Summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## 🚀 Staging Deployment Complete
+          
+          **Endpoint Name:** \`${{ steps.deploy.outputs.endpoint_name }}\`
+          **Model Package:** \`${{ steps.model.outputs.model_package_arn }}\`
+          **Instance Type:** ml.m5.xlarge
+          **Test Status:** ${{ steps.test.outcome }}
+          
+          [View Endpoint in Console](${{ steps.deploy.outputs.endpoint_url }})
+          EOF
+
+  deploy-production:
+    name: Deploy to Production
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.endpoint_url }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install boto3 sagemaker
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-DeployProduction
+
+      - name: Download Staging Test Results
+        uses: actions/download-artifact@v4
+        with:
+          name: staging-test-results
+
+      - name: Validate Staging Tests
+        run: |
+          python scripts/validate_tests.py \
+            --test-results test_results.json \
+            --min-accuracy 0.85
+
+      - name: Get Latest Approved Model
+        id: model
+        run: |
+          python scripts/get_latest_model.py \
+            --project-name ${{ env.SAGEMAKER_PROJECT_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --status Approved
+          
+          echo "model_package_arn=$(cat model_package_arn.txt)" >> $GITHUB_OUTPUT
+
+      - name: Deploy to Production
+        id: deploy
+        run: |
+          python deployment/deploy_endpoint.py \
+            --model-package-arn ${{ steps.model.outputs.model_package_arn }} \
+            --endpoint-name ${{ env.SAGEMAKER_PROJECT_NAME }}-production \
+            --instance-type ml.m5.2xlarge \
+            --instance-count 2 \
+            --region ${{ env.AWS_REGION }} \
+            --enable-autoscaling \
+            --min-capacity 2 \
+            --max-capacity 10
+          
+          echo "endpoint_name=$(cat endpoint_name.txt)" >> $GITHUB_OUTPUT
+          echo "endpoint_url=https://console.aws.amazon.com/sagemaker/home?region=${{ env.AWS_REGION }}#/endpoints/$(cat endpoint_name.txt)" >> $GITHUB_OUTPUT
+
+      - name: Wait for Endpoint
+        run: |
+          python deployment/wait_endpoint.py \
+            --endpoint-name ${{ steps.deploy.outputs.endpoint_name }} \
+            --region ${{ env.AWS_REGION }} \
+            --timeout 1200
+
+      - name: Smoke Test Production
+        run: |
+          python tests/test_endpoint.py \
+            --endpoint-name ${{ steps.deploy.outputs.endpoint_name }} \
+            --test-data tests/test_data.json \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Enable Model Monitor
+        run: |
+          python monitoring/setup_monitor.py \
+            --endpoint-name ${{ steps.deploy.outputs.endpoint_name }} \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Create Deployment Summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## 🎉 Production Deployment Complete
+          
+          **Endpoint Name:** \`${{ steps.deploy.outputs.endpoint_name }}\`
+          **Model Package:** \`${{ steps.model.outputs.model_package_arn }}\`
+          **Instance Type:** ml.m5.2xlarge (2-10 instances with autoscaling)
+          **Deployment Time:** $(date -u)
+          
+          [View Endpoint in Console](${{ steps.deploy.outputs.endpoint_url }})
+          EOF
+
+      - name: Notify Slack
+        if: always()
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "Production Deployment ${{ job.status }}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Production Deployment ${{ job.status }}*\n\nEndpoint: `${{ steps.deploy.outputs.endpoint_name }}`\nModel: `${{ steps.model.outputs.model_package_arn }}`"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

@@ -4,9 +4,19 @@
 import argparse
 import json
 import os
+import sys
+import subprocess
 import tarfile
 import pandas as pd
-import xgboost as xgb
+
+# Install xgboost if not available
+try:
+    import xgboost as xgb
+except ImportError:
+    print("Installing xgboost...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "xgboost>=1.7.0"])
+    import xgboost as xgb
+
 from sklearn.metrics import (
     accuracy_score,
     precision_score,

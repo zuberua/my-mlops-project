@@ -194,8 +194,14 @@ def create_pipeline(
     )
     
     # Condition: Register model only if accuracy >= 0.8
+    from sagemaker.workflow.functions import JsonGet
+    
     cond_gte = ConditionGreaterThanOrEqualTo(
-        left=evaluation_report.get("classification_metrics.accuracy.value"),
+        left=JsonGet(
+            step_name=step_evaluate.name,
+            property_file=evaluation_report,
+            json_path="classification_metrics.accuracy.value"
+        ),
         right=0.8
     )
     

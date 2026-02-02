@@ -27,11 +27,22 @@ def create_pipeline(
 ):
     """Create SageMaker Pipeline."""
     
-    sagemaker_session = boto3.Session(region_name=region)
-    sm_client = sagemaker_session.client("sagemaker")
+    import sagemaker
+    
+    # Get account ID
+    sts_client = boto3.client('sts', region_name=region)
+    account_id = sts_client.get_caller_identity()['Account']
     
     if bucket is None:
-        bucket = f"sagemaker-{region}-{boto3.client('sts').get_caller_identity()['Account']}"
+        bucket = f"sagemaker-{project_name}-{account_id}"
+    
+    # Create SageMaker session with explicit bucket
+    sagemaker_session = sagemaker.Session(
+        boto_session=boto3.Session(region_name=region),
+        default_bucket=bucket
+    )
+    
+    sm_client = boto3.client("sagemaker", region_name=region)
     
     # Pipeline parameters
     processing_instance_type = ParameterString(
@@ -61,6 +72,7 @@ def create_pipeline(
         instance_count=1,
         base_job_name=f"{project_name}-preprocess",
         role=role,
+        sagemaker_session=sagemaker_session,
     )
     
     step_process = ProcessingStep(
@@ -100,6 +112,7 @@ def create_pipeline(
         output_path=f"s3://{bucket}/{project_name}/models",
         base_job_name=f"{project_name}-train",
         role=role,
+        sagemaker_session=sagemaker_session,
         hyperparameters={
             "objective": "binary:logistic",
             "num_round": "100",
@@ -132,6 +145,7 @@ def create_pipeline(
         instance_count=1,
         base_job_name=f"{project_name}-evaluate",
         role=role,
+        sagemaker_session=sagemaker_session,
     )
     
     evaluation_report = PropertyFile(

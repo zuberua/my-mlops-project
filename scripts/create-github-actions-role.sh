@@ -161,10 +161,10 @@ aws iam attach-role-policy \
 
 echo "✓ Policy attached"
 
-# Step 6: Add S3 and Bedrock permissions (for AgentCore runtime)
+# Step 6: Add S3, Bedrock, and AgentCore Control permissions
 echo ""
 echo "=========================================="
-echo "Step 6: Adding S3 and Bedrock Permissions"
+echo "Step 6: Adding S3, Bedrock, and AgentCore Permissions"
 echo "=========================================="
 
 cat > /tmp/agentcore-policy.json <<EOF
@@ -193,6 +193,31 @@ cat > /tmp/agentcore-policy.json <<EOF
         "arn:aws:bedrock:us-west-2::foundation-model/amazon.titan-embed-text-v2:0",
         "arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-3-5-haiku-20241022-v1:0"
       ]
+    },
+    {
+      "Sid": "AgentCoreControl",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock-agentcore-control:ListAgentRuntimes",
+        "bedrock-agentcore-control:GetAgentRuntime",
+        "bedrock-agentcore-control:CreateAgentRuntime",
+        "bedrock-agentcore-control:UpdateAgentRuntime",
+        "bedrock-agentcore-control:DeleteAgentRuntime"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "PassRoleToAgentCore",
+      "Effect": "Allow",
+      "Action": [
+        "iam:PassRole"
+      ],
+      "Resource": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/agentcore-mark-vle-agent-execution",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "bedrock-agentcore.amazonaws.com"
+        }
+      }
     }
   ]
 }
@@ -244,6 +269,8 @@ echo "2. The role has permissions for:"
 echo "   ✓ ECR (push/pull images)"
 echo "   ✓ S3 (read from mark-vie-kb-138720056246)"
 echo "   ✓ Bedrock (invoke models)"
+echo "   ✓ AgentCore Control (create/update agents)"
+echo "   ✓ IAM PassRole (for AgentCore execution role)"
 echo ""
 echo "3. Run your GitHub Actions workflow!"
 echo ""

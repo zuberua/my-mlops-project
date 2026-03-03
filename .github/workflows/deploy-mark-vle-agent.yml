@@ -66,7 +66,7 @@ jobs:
           echo "IMAGE_URI=$ECR_REGISTRY/$ECR_REPOSITORY:latest" >> $GITHUB_OUTPUT
   
   deploy-to-agentcore:
-    name: Deploy to AgentCore
+    name: Deploy to AgentCore Runtime
     needs: build-and-push
     runs-on: ubuntu-latest
     
@@ -74,13 +74,18 @@ jobs:
       id-token: write
       contents: read
     
-    environment:
-      name: agentcore-production
-      url: https://console.aws.amazon.com/bedrock/home?region=${{ env.AWS_REGION }}#/agentcore
-    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install boto3
+        run: |
+          pip install boto3
       
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -92,64 +97,44 @@ jobs:
       - name: Deploy to AgentCore Runtime
         env:
           IMAGE_URI: ${{ needs.build-and-push.outputs.IMAGE_URI }}
-          RUNTIME_ARN: arn:aws:bedrock-agentcore:us-east-1:138720056246:runtime/agent-675ATtDQE1
+          RUNTIME_ID: agent-675ATtDQE1
           AGENT_NAME: mark-vle-agent
+          EXECUTION_ROLE_ARN: ${{ secrets.AGENTCORE_EXECUTION_ROLE_ARN }}
         run: |
           echo "Deploying to AgentCore Runtime"
-          echo "Runtime ARN: $RUNTIME_ARN"
+          echo "Runtime ID: $RUNTIME_ID"
           echo "Image URI: $IMAGE_URI"
           echo "Agent Name: $AGENT_NAME"
           
-          # Check if agent exists in runtime
-          AGENT_ARN=$(aws bedrock-agentcore list-agents \
-            --runtime-arn $RUNTIME_ARN \
-            --region $AWS_REGION \
-            --query "agents[?name=='$AGENT_NAME'].arn" \
-            --output text 2>/dev/null || echo "")
-          
-          if [ -z "$AGENT_ARN" ]; then
-            echo "Agent not found. Creating new agent in AgentCore..."
-            
-            # Create agent in AgentCore runtime
-            aws bedrock-agentcore create-agent \
-              --runtime-arn $RUNTIME_ARN \
-              --name $AGENT_NAME \
-              --image-uri $IMAGE_URI \
-              --execution-role-arn ${{ secrets.AGENTCORE_EXECUTION_ROLE_ARN }} \
-              --region $AWS_REGION \
-              --environment-variables AWS_REGION=us-west-2,S3_BUCKET_NAME=mark-vie-kb-138720056246,EMBEDDING_MODEL=amazon.titan-embed-text-v2:0
-            
-            echo "✓ Agent created in AgentCore"
-          else
-            echo "✓ Agent found: $AGENT_ARN"
-            echo "Updating agent..."
-            
-            # Update agent in AgentCore runtime
-            aws bedrock-agentcore update-agent \
-              --agent-arn $AGENT_ARN \
-              --image-uri $IMAGE_URI \
-              --execution-role-arn ${{ secrets.AGENTCORE_EXECUTION_ROLE_ARN }} \
-              --region $AWS_REGION \
-              --environment-variables AWS_REGION=us-west-2,S3_BUCKET_NAME=mark-vie-kb-138720056246,EMBEDDING_MODEL=amazon.titan-embed-text-v2:0
-            
-            echo "✓ Agent updated in AgentCore"
-          fi
-          
-          echo "AGENT_ARN=$AGENT_ARN" >> $GITHUB_OUTPUT
+          python mark-vle-strands-agent/scripts/deploy_to_agentcore.py \
+            --agent-name $AGENT_NAME \
+            --region ${{ env.AWS_REGION }} \
+            --container-uri $IMAGE_URI \
+            --runtime-id $RUNTIME_ID \
+            --role-arn $EXECUTION_ROLE_ARN
       
       - name: Deployment Summary
+        if: success()
         run: |
-          echo "## 🚀 AgentCore Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "## ✅ AgentCore Deployment Complete" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Agent Name:** mark-vle-agent" >> $GITHUB_STEP_SUMMARY
-          echo "**Image URI:** ${{ needs.build-and-push.outputs.IMAGE_URI }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Runtime ARN:** arn:aws:bedrock-agentcore:us-east-1:138720056246:runtime/agent-675ATtDQE1" >> $GITHUB_STEP_SUMMARY
-          echo "**Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f deployment_info.txt ]; then
+            cat deployment_info.txt >> $GITHUB_STEP_SUMMARY
+          fi
+          
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Test the agent:" >> $GITHUB_STEP_SUMMARY
-          echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "aws bedrock-agentcore invoke-agent \\" >> $GITHUB_STEP_SUMMARY
-          echo "  --agent-arn <agent-arn> \\" >> $GITHUB_STEP_SUMMARY
-          echo '  --input "What is TNH-SPEED-1?" \' >> $GITHUB_STEP_SUMMARY
-          echo "  --region ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "### Agent Details:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Name:** mark-vle-agent" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runtime:** agent-675ATtDQE1" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region:** us-east-1" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Test the Agent:" >> $GITHUB_STEP_SUMMARY
+          echo '```python' >> $GITHUB_STEP_SUMMARY
+          echo "import boto3" >> $GITHUB_STEP_SUMMARY
+          echo "client = boto3.client('bedrock-agentcore-runtime', region_name='us-east-1')" >> $GITHUB_STEP_SUMMARY
+          echo "response = client.invoke_agent(" >> $GITHUB_STEP_SUMMARY
+          echo "    agentName='mark-vle-agent'," >> $GITHUB_STEP_SUMMARY
+          echo "    inputText='Generate a PLC diagram for COMPARE_50'" >> $GITHUB_STEP_SUMMARY
+          echo ")" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY

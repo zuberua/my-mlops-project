@@ -76,7 +76,7 @@ jobs:
     
     environment:
       name: agentcore-production
-      url: https://console.aws.amazon.com/bedrock/home?region=${{ env.AWS_REGION }}#/agents
+      url: https://console.aws.amazon.com/bedrock/home?region=${{ env.AWS_REGION }}#/agentcore
     
     steps:
       - name: Checkout code
@@ -89,53 +89,53 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: GitHubActions-AgentCoreDeploy
       
-      - name: Update AgentCore Agent
+      - name: Deploy to AgentCore Runtime
         env:
           IMAGE_URI: ${{ needs.build-and-push.outputs.IMAGE_URI }}
+          RUNTIME_ARN: arn:aws:bedrock-agentcore:us-east-1:138720056246:runtime/agent-675ATtDQE1
           AGENT_NAME: mark-vle-agent
         run: |
-          echo "Updating AgentCore agent: $AGENT_NAME"
+          echo "Deploying to AgentCore Runtime"
+          echo "Runtime ARN: $RUNTIME_ARN"
           echo "Image URI: $IMAGE_URI"
+          echo "Agent Name: $AGENT_NAME"
           
-          # Check if agent exists
-          AGENT_ID=$(aws bedrock-agent list-agents \
+          # Check if agent exists in runtime
+          AGENT_ARN=$(aws bedrock-agentcore list-agents \
+            --runtime-arn $RUNTIME_ARN \
             --region $AWS_REGION \
-            --query "agentSummaries[?agentName=='$AGENT_NAME'].agentId" \
-            --output text)
+            --query "agents[?name=='$AGENT_NAME'].arn" \
+            --output text 2>/dev/null || echo "")
           
-          if [ -z "$AGENT_ID" ]; then
-            echo "Agent not found. Creating new agent..."
+          if [ -z "$AGENT_ARN" ]; then
+            echo "Agent not found. Creating new agent in AgentCore..."
             
-            # Create new agent
-            aws bedrock-agent create-agent \
-              --agent-name $AGENT_NAME \
+            # Create agent in AgentCore runtime
+            aws bedrock-agentcore create-agent \
+              --runtime-arn $RUNTIME_ARN \
+              --name $AGENT_NAME \
+              --image-uri $IMAGE_URI \
+              --execution-role-arn ${{ secrets.AGENTCORE_EXECUTION_ROLE_ARN }} \
               --region $AWS_REGION \
-              --foundation-model anthropic.claude-3-5-haiku-20241022-v1:0 \
-              --instruction "You are an expert assistant for the Mark Vle turbine control system." \
-              --agent-resource-role-arn ${{ secrets.AGENTCORE_EXECUTION_ROLE_ARN }}
+              --environment-variables AWS_REGION=us-west-2,S3_BUCKET_NAME=mark-vie-kb-138720056246,EMBEDDING_MODEL=amazon.titan-embed-text-v2:0
             
-            AGENT_ID=$(aws bedrock-agent list-agents \
-              --region $AWS_REGION \
-              --query "agentSummaries[?agentName=='$AGENT_NAME'].agentId" \
-              --output text)
-            
-            echo "✓ Agent created: $AGENT_ID"
+            echo "✓ Agent created in AgentCore"
           else
-            echo "✓ Agent found: $AGENT_ID"
+            echo "✓ Agent found: $AGENT_ARN"
+            echo "Updating agent..."
+            
+            # Update agent in AgentCore runtime
+            aws bedrock-agentcore update-agent \
+              --agent-arn $AGENT_ARN \
+              --image-uri $IMAGE_URI \
+              --execution-role-arn ${{ secrets.AGENTCORE_EXECUTION_ROLE_ARN }} \
+              --region $AWS_REGION \
+              --environment-variables AWS_REGION=us-west-2,S3_BUCKET_NAME=mark-vie-kb-138720056246,EMBEDDING_MODEL=amazon.titan-embed-text-v2:0
+            
+            echo "✓ Agent updated in AgentCore"
           fi
           
-          # Update agent with new image
-          echo "Updating agent configuration..."
-          aws bedrock-agent update-agent \
-            --agent-id $AGENT_ID \
-            --region $AWS_REGION \
-            --agent-name $AGENT_NAME \
-            --foundation-model anthropic.claude-3-5-haiku-20241022-v1:0 \
-            --instruction "You are an expert assistant for the Mark Vle turbine control system with access to S3-based RAG." \
-            --agent-resource-role-arn ${{ secrets.AGENTCORE_EXECUTION_ROLE_ARN }}
-          
-          echo "✓ Agent updated"
-          echo "AGENT_ID=$AGENT_ID" >> $GITHUB_OUTPUT
+          echo "AGENT_ARN=$AGENT_ARN" >> $GITHUB_OUTPUT
       
       - name: Deployment Summary
         run: |
@@ -143,14 +143,13 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Agent Name:** mark-vle-agent" >> $GITHUB_STEP_SUMMARY
           echo "**Image URI:** ${{ needs.build-and-push.outputs.IMAGE_URI }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Runtime ARN:** arn:aws:bedrock-agentcore:us-east-1:138720056246:runtime/agent-675ATtDQE1" >> $GITHUB_STEP_SUMMARY
           echo "**Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Test the agent:" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "aws bedrock-agent-runtime invoke-agent \\" >> $GITHUB_STEP_SUMMARY
-          echo "  --agent-id <agent-id> \\" >> $GITHUB_STEP_SUMMARY
-          echo "  --agent-alias-id <alias-id> \\" >> $GITHUB_STEP_SUMMARY
-          echo '  --session-id $(uuidgen) \' >> $GITHUB_STEP_SUMMARY
-          echo '  --input-text "What is TNH-SPEED-1?" \' >> $GITHUB_STEP_SUMMARY
+          echo "aws bedrock-agentcore invoke-agent \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --agent-arn <agent-arn> \\" >> $GITHUB_STEP_SUMMARY
+          echo '  --input "What is TNH-SPEED-1?" \' >> $GITHUB_STEP_SUMMARY
           echo "  --region ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY

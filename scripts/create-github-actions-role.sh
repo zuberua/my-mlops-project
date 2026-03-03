@@ -198,11 +198,7 @@ cat > /tmp/agentcore-policy.json <<EOF
       "Sid": "AgentCoreControl",
       "Effect": "Allow",
       "Action": [
-        "bedrock-agentcore-control:ListAgentRuntimes",
-        "bedrock-agentcore-control:GetAgentRuntime",
-        "bedrock-agentcore-control:CreateAgentRuntime",
-        "bedrock-agentcore-control:UpdateAgentRuntime",
-        "bedrock-agentcore-control:DeleteAgentRuntime"
+        "bedrock-agentcore:*"
       ],
       "Resource": "*"
     },

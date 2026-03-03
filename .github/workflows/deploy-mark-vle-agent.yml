@@ -98,7 +98,7 @@ jobs:
         env:
           IMAGE_URI: ${{ needs.build-and-push.outputs.IMAGE_URI }}
           RUNTIME_ID: agent-675ATtDQE1
-          AGENT_NAME: mark-vle-agent
+          AGENT_NAME: mark_vle_agent
           EXECUTION_ROLE_ARN: ${{ secrets.AGENTCORE_EXECUTION_ROLE_ARN }}
         run: |
           echo "Deploying to AgentCore Runtime"
@@ -125,7 +125,7 @@ jobs:
           
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Agent Details:" >> $GITHUB_STEP_SUMMARY
-          echo "- **Name:** mark-vle-agent" >> $GITHUB_STEP_SUMMARY
+          echo "- **Name:** mark_vle_agent" >> $GITHUB_STEP_SUMMARY
           echo "- **Runtime:** agent-675ATtDQE1" >> $GITHUB_STEP_SUMMARY
           echo "- **Region:** us-east-1" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -134,7 +134,7 @@ jobs:
           echo "import boto3" >> $GITHUB_STEP_SUMMARY
           echo "client = boto3.client('bedrock-agentcore-runtime', region_name='us-east-1')" >> $GITHUB_STEP_SUMMARY
           echo "response = client.invoke_agent(" >> $GITHUB_STEP_SUMMARY
-          echo "    agentName='mark-vle-agent'," >> $GITHUB_STEP_SUMMARY
+          echo "    agentName='mark_vle_agent'," >> $GITHUB_STEP_SUMMARY
           echo "    inputText='Generate a PLC diagram for COMPARE_50'" >> $GITHUB_STEP_SUMMARY
           echo ")" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY

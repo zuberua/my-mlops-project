@@ -1,6 +1,6 @@
 # AgentCore Deployment Guide
 
-## Quick Deploy
+## Quick Deploy for Strands
 
 ```bash
 ./deploy.sh

@@ -1,6 +1,6 @@
 # AgentCore Deployment Guide
 
-## Quick Deploy for agent
+## Quick Deploy
 
 ```bash
 ./deploy.sh

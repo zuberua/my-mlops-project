@@ -18,6 +18,9 @@ jobs:
     name: Build and Push to ECR
     runs-on: ubuntu-latest
     
+    outputs:
+      IMAGE_URI: ${{ steps.output.outputs.IMAGE_URI }}
+    
     permissions:
       id-token: write
       contents: read
@@ -55,8 +58,99 @@ jobs:
           echo "Image URI: $ECR_REGISTRY/$ECR_REPOSITORY:latest"
       
       - name: Output image URI
+        id: output
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
           echo "::notice title=Deployment Complete::Image URI: $ECR_REGISTRY/$ECR_REPOSITORY:latest"
           echo "IMAGE_URI=$ECR_REGISTRY/$ECR_REPOSITORY:latest" >> $GITHUB_OUTPUT
+  
+  deploy-to-agentcore:
+    name: Deploy to AgentCore
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    
+    permissions:
+      id-token: write
+      contents: read
+    
+    environment:
+      name: agentcore-production
+      url: https://console.aws.amazon.com/bedrock/home?region=${{ env.AWS_REGION }}#/agents
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-AgentCoreDeploy
+      
+      - name: Update AgentCore Agent
+        env:
+          IMAGE_URI: ${{ needs.build-and-push.outputs.IMAGE_URI }}
+          AGENT_NAME: mark-vle-agent
+        run: |
+          echo "Updating AgentCore agent: $AGENT_NAME"
+          echo "Image URI: $IMAGE_URI"
+          
+          # Check if agent exists
+          AGENT_ID=$(aws bedrock-agent list-agents \
+            --region $AWS_REGION \
+            --query "agentSummaries[?agentName=='$AGENT_NAME'].agentId" \
+            --output text)
+          
+          if [ -z "$AGENT_ID" ]; then
+            echo "Agent not found. Creating new agent..."
+            
+            # Create new agent
+            aws bedrock-agent create-agent \
+              --agent-name $AGENT_NAME \
+              --region $AWS_REGION \
+              --foundation-model anthropic.claude-3-5-haiku-20241022-v1:0 \
+              --instruction "You are an expert assistant for the Mark Vle turbine control system." \
+              --agent-resource-role-arn ${{ secrets.AGENTCORE_EXECUTION_ROLE_ARN }}
+            
+            AGENT_ID=$(aws bedrock-agent list-agents \
+              --region $AWS_REGION \
+              --query "agentSummaries[?agentName=='$AGENT_NAME'].agentId" \
+              --output text)
+            
+            echo "✓ Agent created: $AGENT_ID"
+          else
+            echo "✓ Agent found: $AGENT_ID"
+          fi
+          
+          # Update agent with new image
+          echo "Updating agent configuration..."
+          aws bedrock-agent update-agent \
+            --agent-id $AGENT_ID \
+            --region $AWS_REGION \
+            --agent-name $AGENT_NAME \
+            --foundation-model anthropic.claude-3-5-haiku-20241022-v1:0 \
+            --instruction "You are an expert assistant for the Mark Vle turbine control system with access to S3-based RAG." \
+            --agent-resource-role-arn ${{ secrets.AGENTCORE_EXECUTION_ROLE_ARN }}
+          
+          echo "✓ Agent updated"
+          echo "AGENT_ID=$AGENT_ID" >> $GITHUB_OUTPUT
+      
+      - name: Deployment Summary
+        run: |
+          echo "## 🚀 AgentCore Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Agent Name:** mark-vle-agent" >> $GITHUB_STEP_SUMMARY
+          echo "**Image URI:** ${{ needs.build-and-push.outputs.IMAGE_URI }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Test the agent:" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "aws bedrock-agent-runtime invoke-agent \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --agent-id <agent-id> \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --agent-alias-id <alias-id> \\" >> $GITHUB_STEP_SUMMARY
+          echo '  --session-id $(uuidgen) \' >> $GITHUB_STEP_SUMMARY
+          echo '  --input-text "What is TNH-SPEED-1?" \' >> $GITHUB_STEP_SUMMARY
+          echo "  --region ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

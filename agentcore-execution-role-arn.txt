@@ -1,0 +1,1 @@
+arn:aws:iam::138720056246:role/agentcore-mark-vle-agent-execution

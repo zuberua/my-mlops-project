@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mark Vle Strands Agent</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+        
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            padding: 30px;
+        }
+        
+        .panel {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .panel h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+        }
+        
+        #chat-messages {
+            height: 400px;
+            overflow-y: auto;
+            background: white;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 15px;
+            border: 2px solid #e0e0e0;
+        }
+        
+        .message {
+            margin-bottom: 15px;
+            padding: 12px 15px;
+            border-radius: 10px;
+            max-width: 80%;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        
+        .message strong {
+            font-weight: 600;
+            color: #667eea;
+        }
+        
+        .agent-message strong {
+            color: #5568d3;
+        }
+        
+        .message code {
+            background: rgba(0,0,0,0.05);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+        
+        .message pre {
+            background: rgba(0,0,0,0.05);
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+            margin: 10px 0;
+        }
+        
+        .user-message {
+            background: #667eea;
+            color: white;
+            margin-left: auto;
+            text-align: right;
+        }
+        
+        .agent-message {
+            background: #e8eaf6;
+            color: #333;
+        }
+        
+        .input-group {
+            display: flex;
+            gap: 10px;
+        }
+        
+        input[type="text"] {
+            flex: 1;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 1em;
+        }
+        
+        button {
+            padding: 12px 25px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        
+        button:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        #diagram-container {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            min-height: 400px;
+            border: 2px solid #e0e0e0;
+            overflow: auto;
+        }
+        
+        .examples {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        .example-btn {
+            padding: 8px 15px;
+            background: #e8eaf6;
+            color: #667eea;
+            border: 2px solid #667eea;
+            border-radius: 20px;
+            font-size: 0.9em;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .example-btn:hover {
+            background: #667eea;
+            color: white;
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        pre {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+        
+        code {
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 Mark Vle Strands Agent</h1>
+            <p>AI Assistant for Turbine Control System with PLC Diagram Generation</p>
+        </div>
+        
+        <div class="main-content">
+            <!-- Chat Panel -->
+            <div class="panel">
+                <h2>💬 Chat with Agent</h2>
+                <div id="chat-messages"></div>
+                <div class="input-group">
+                    <input type="text" id="user-input" placeholder="Ask about I/O points, PLC blocks, or control logic..." />
+                    <button id="send-btn" onclick="sendMessage()">Send</button>
+                </div>
+                <div class="examples">
+                    <button class="example-btn" onclick="sendExample('What is TNH-SPEED-1?')">TNH-SPEED-1</button>
+                    <button class="example-btn" onclick="sendExample('Tell me about COMPARE_50')">COMPARE_50</button>
+                    <button class="example-btn" onclick="sendExample('Explain MOVE_150')">MOVE_150</button>
+                    <button class="example-btn" onclick="sendExample('Generate diagram for MOVE_150')">Diagram MOVE_150</button>
+                </div>
+            </div>
+            
+            <!-- Diagram Panel -->
+            <div class="panel">
+                <h2>📊 PLC Block Diagram</h2>
+                <div class="input-group" style="margin-bottom: 15px;">
+                    <input type="text" id="block-name" placeholder="Enter block name (e.g., MOVE_150, COMPARE_50)" />
+                    <button onclick="generateDiagram()">Generate</button>
+                </div>
+                <div id="diagram-container">
+                    <p style="text-align: center; color: #999; padding: 50px;">
+                        Enter a block name and click Generate to see the PLC diagram
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        
+        function addMessage(text, isUser) {
+            const messagesDiv = document.getElementById('chat-messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isUser ? 'user-message' : 'agent-message'}`;
+            
+            // Check if message contains mermaid code
+            if (text.includes('```mermaid')) {
+                const parts = text.split('```mermaid');
+                messageDiv.innerHTML = formatText(parts[0]);
+                
+                if (parts.length > 1) {
+                    const mermaidParts = parts[1].split('```');
+                    const mermaidCode = mermaidParts[0].trim();
+                    
+                    // Render mermaid in diagram panel
+                    renderMermaid(mermaidCode);
+                    
+                    // Add rest of message
+                    if (mermaidParts.length > 1) {
+                        messageDiv.innerHTML += '<br><em>✓ Diagram generated in right panel</em><br>' + formatText(mermaidParts[1]);
+                    }
+                }
+            } else {
+                messageDiv.innerHTML = formatText(text);
+            }
+            
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+        
+        function formatText(text) {
+            // Convert markdown-style formatting to HTML
+            let formatted = text
+                // Bold
+                .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                // Bullet points
+                .replace(/^- (.+)$/gm, '• $1')
+                // Line breaks (preserve paragraph structure)
+                .replace(/\n\n/g, '<br><br>')
+                .replace(/\n/g, '<br>')
+                // Code blocks
+                .replace(/```(\w+)?\n([\s\S]+?)```/g, '<pre><code>$2</code></pre>')
+                // Inline code
+                .replace(/`([^`]+)`/g, '<code>$1</code>');
+            
+            return formatted;
+        }
+        
+        async function sendMessage() {
+            const input = document.getElementById('user-input');
+            const message = input.value.trim();
+            
+            if (!message) return;
+            
+            addMessage(message, true);
+            input.value = '';
+            
+            const sendBtn = document.getElementById('send-btn');
+            sendBtn.disabled = true;
+            sendBtn.innerHTML = '<span class="loading"></span>';
+            
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message })
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    addMessage('Error: ' + data.error, false);
+                } else {
+                    addMessage(data.response, false);
+                }
+            } catch (error) {
+                addMessage('Error: ' + error.message, false);
+            } finally {
+                sendBtn.disabled = false;
+                sendBtn.textContent = 'Send';
+            }
+        }
+        
+        function sendExample(text) {
+            document.getElementById('user-input').value = text;
+            sendMessage();
+        }
+        
+        async function generateDiagram() {
+            const blockName = document.getElementById('block-name').value.trim();
+            
+            if (!blockName) {
+                alert('Please enter a block name');
+                return;
+            }
+            
+            const container = document.getElementById('diagram-container');
+            container.innerHTML = '<p style="text-align: center;"><span class="loading"></span> Generating diagram...</p>';
+            
+            try {
+                const response = await fetch('/api/generate-plc-diagram', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ blockName })
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    container.innerHTML = `<p style="color: red;">Error: ${data.error}</p>`;
+                } else {
+                    renderMermaid(data.mermaid);
+                }
+            } catch (error) {
+                container.innerHTML = `<p style="color: red;">Error: ${error.message}</p>`;
+            }
+        }
+        
+        async function renderMermaid(code) {
+            const container = document.getElementById('diagram-container');
+            const id = 'mermaid-' + Date.now();
+            
+            try {
+                const { svg } = await mermaid.render(id, code);
+                container.innerHTML = svg;
+            } catch (error) {
+                container.innerHTML = `<p style="color: red;">Error rendering diagram: ${error.message}</p>`;
+            }
+        }
+        
+        // Enter key to send
+        document.getElementById('user-input').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+        
+        document.getElementById('block-name').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                generateDiagram();
+            }
+        });
+    </script>
+</body>
+</html>

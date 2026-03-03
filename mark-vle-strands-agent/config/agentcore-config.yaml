@@ -1,0 +1,77 @@
+name: mark-vle-agent
+description: Mark Vle turbine control system expert assistant with S3 vector RAG
+
+# Runtime configuration
+runtime:
+  type: container
+  image: mark-vle-agent:latest
+  memory: 2048  # MB
+  timeout: 300  # seconds (5 minutes)
+  
+# Environment variables
+environment:
+  # LiteLLM Configuration
+  LITELLM_API_KEY: ${LITELLM_API_KEY}
+  LITELLM_PROXY_URL: ${LITELLM_PROXY_URL}
+  LITELLM_MODEL: litellm_proxy/bedrock-claude-sonnet-4.5
+  LITELLM_API_KEY_PROVIDER: ${LITELLM_API_KEY_PROVIDER}
+  
+  # AgentCore Identity
+  AGENT_IDENTITY_NAME: mark-vle-identity
+  AGENT_IDENTITY_SCOPES: read,write
+  
+  # AWS Configuration
+  AWS_REGION: us-west-2
+  S3_BUCKET_NAME: mark-vie-s3-rag
+  
+  # Embedding Model
+  EMBEDDING_MODEL: amazon.titan-embed-text-v2:0
+  
+  # Agent Configuration
+  AGENT_TEMPERATURE: "0.7"
+  AGENT_MAX_TOKENS: "2000"
+  
+  # RAG Configuration
+  RAG_MAX_RESULTS: "3"
+  RAG_SIMILARITY_THRESHOLD: "0.5"
+
+# IAM permissions
+permissions:
+  - service: s3
+    actions:
+      - s3:GetObject
+      - s3:ListBucket
+    resources:
+      - arn:aws:s3:::mark-vie-s3-rag
+      - arn:aws:s3:::mark-vie-s3-rag/*
+  
+  - service: bedrock
+    actions:
+      - bedrock:InvokeModel
+    resources:
+      - arn:aws:bedrock:*::foundation-model/amazon.titan-embed-text-v2:0
+
+# Identity configuration
+identity:
+  type: iam  # or cognito, oauth
+  
+# Observability
+observability:
+  cloudwatch:
+    enabled: true
+    log_group: /aws/agentcore/mark-vle-agent
+  
+  otel:
+    enabled: true
+    endpoint: ${OTEL_ENDPOINT}
+
+# Tools configuration
+tools:
+  - name: search_knowledge_base
+    description: Search Mark Vle knowledge base for I/O points and control logic
+    
+  - name: generate_diagram
+    description: Generate FBD diagrams for control systems
+    
+  - name: export_xml
+    description: Export Mark VIe XML configurations

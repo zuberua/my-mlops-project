@@ -1,5 +1,9 @@
 # SageMaker MLOps with GitHub Actions
 
+> **⚠️ DISCLAIMER: This is sample code for learning and demonstration purposes only.**  
+> **DO NOT use this code in production without proper review, testing, and security hardening.**  
+> **This code is provided "as-is" without any warranties or guarantees.**
+
 Complete MLOps solution using Amazon SageMaker and GitHub Actions for CI/CD, replacing AWS CodePipeline and CodeBuild with GitHub's native automation.
 
 ## Architecture

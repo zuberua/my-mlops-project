@@ -138,6 +138,9 @@ jobs:
     permissions:
       id-token: write
       contents: read
+    environment:
+      name: model-approval
+      url: https://console.aws.amazon.com/sagemaker/home?region=${{ env.AWS_REGION }}#/model-packages
     
     steps:
       - name: Checkout code
@@ -162,6 +165,21 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: pipeline-artifacts
+
+      - name: Display Model Metrics
+        run: |
+          echo "## 📊 Model Metrics for Approval" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          python3 -c "
+          import json
+          with open('results.json') as f:
+              results = json.load(f)
+          print(f\"**Accuracy:** {results.get('accuracy', 'N/A')}\")
+          print(f\"**Model Package ARN:** {results.get('model_package_arn', 'N/A')}\")
+          print(f\"**Status:** {results.get('status', 'N/A')}\")
+          " >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "⚠️ **Review the metrics above before approving**" >> $GITHUB_STEP_SUMMARY
 
       - name: Approve Model for Deployment
         run: |

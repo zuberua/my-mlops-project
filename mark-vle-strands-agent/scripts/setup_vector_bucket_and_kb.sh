@@ -372,7 +372,7 @@ echo ""
 if [ -n "$CI" ] || [ "$NON_INTERACTIVE" = "true" ]; then
     print_message "$YELLOW" "Running in non-interactive mode"
     # Use environment variables or defaults
-    AWS_PROFILE="${AWS_PROFILE:-}"
+    # Don't set AWS_PROFILE if not already set (for CI/CD with IAM roles)
     REGION="${REGION:-$DEFAULT_REGION}"
     BUCKET_NAME="${BUCKET_NAME:-$DEFAULT_BUCKET_NAME}"
     ENVIRONMENT="${ENVIRONMENT:-$DEFAULT_ENVIRONMENT}"

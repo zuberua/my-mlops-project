@@ -2,6 +2,8 @@
 
 AI agent for Mark Vle control system using Amazon Bedrock with S3-based vector RAG.
 
+<!-- Pipeline trigger: Updated deployment configuration with .deploy.env support -->
+
 ## Features
 
 - Claude 3.5 Haiku via Amazon Bedrock

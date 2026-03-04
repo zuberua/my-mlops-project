@@ -18,6 +18,13 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Function to print colored messages (define early)
+print_message() {
+    local color=$1
+    shift
+    echo -e "${color}$@${NC}"
+}
+
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -38,13 +45,6 @@ STACK_NAME="${STACK_NAME:-mark-vle-vector-bucket}"
 DEFAULT_BUCKET_NAME="${BUCKET_NAME:-markvie-vectors}"
 DEFAULT_REGION="${REGION:-us-west-2}"
 DEFAULT_ENVIRONMENT="${ENVIRONMENT:-production}"
-
-# Function to print colored messages
-print_message() {
-    local color=$1
-    shift
-    echo -e "${color}$@${NC}"
-}
 
 print_header() {
     echo ""

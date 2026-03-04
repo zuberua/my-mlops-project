@@ -22,10 +22,22 @@ NC='\033[0m' # No Color
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 CF_TEMPLATE="$PROJECT_ROOT/cloudformation/vector-bucket.yaml"
-STACK_NAME="mark-vle-vector-bucket"
-DEFAULT_BUCKET_NAME="markvie-vectors"
-DEFAULT_REGION="us-west-2"
-DEFAULT_ENVIRONMENT="production"
+
+# Load deployment configuration from .deploy.env if it exists
+DEPLOY_ENV_FILE="$PROJECT_ROOT/.deploy.env"
+if [ -f "$DEPLOY_ENV_FILE" ]; then
+    print_message "$BLUE" "Loading configuration from .deploy.env"
+    # Source the file to load variables
+    set -a  # Automatically export all variables
+    source "$DEPLOY_ENV_FILE"
+    set +a
+fi
+
+# Read from environment variables or use defaults
+STACK_NAME="${STACK_NAME:-mark-vle-vector-bucket}"
+DEFAULT_BUCKET_NAME="${BUCKET_NAME:-markvie-vectors}"
+DEFAULT_REGION="${REGION:-us-west-2}"
+DEFAULT_ENVIRONMENT="${ENVIRONMENT:-production}"
 
 # Function to print colored messages
 print_message() {
@@ -83,11 +95,18 @@ get_input() {
 
 # Function to check if CloudFormation stack exists
 stack_exists() {
-    aws cloudformation describe-stacks \
-        --stack-name "$STACK_NAME" \
-        --region "$REGION" \
-        --profile "$AWS_PROFILE" \
-        &> /dev/null
+    if [ -z "$AWS_PROFILE" ]; then
+        aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --region "$REGION" \
+            &> /dev/null
+    else
+        aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --region "$REGION" \
+            --profile "$AWS_PROFILE" \
+            &> /dev/null
+    fi
     return $?
 }
 
@@ -349,25 +368,42 @@ echo ""
 print_message "$BLUE" "Please provide the following information:"
 echo ""
 
-get_input "AWS Profile" "${AWS_PROFILE:-default}" AWS_PROFILE
-get_input "AWS Region" "$DEFAULT_REGION" REGION
-get_input "Vector Bucket Name (without account ID)" "$DEFAULT_BUCKET_NAME" BUCKET_NAME
-get_input "Environment" "$DEFAULT_ENVIRONMENT" ENVIRONMENT
+# Check if running in non-interactive mode (CI/CD)
+if [ -n "$CI" ] || [ "$NON_INTERACTIVE" = "true" ]; then
+    print_message "$YELLOW" "Running in non-interactive mode"
+    # Use environment variables or defaults
+    AWS_PROFILE="${AWS_PROFILE:-}"
+    REGION="${REGION:-$DEFAULT_REGION}"
+    BUCKET_NAME="${BUCKET_NAME:-$DEFAULT_BUCKET_NAME}"
+    ENVIRONMENT="${ENVIRONMENT:-$DEFAULT_ENVIRONMENT}"
+    
+    print_message "$GREEN" "Using configuration from environment variables"
+else
+    get_input "AWS Profile" "${AWS_PROFILE:-default}" AWS_PROFILE
+    get_input "AWS Region" "$DEFAULT_REGION" REGION
+    get_input "Vector Bucket Name (without account ID)" "$DEFAULT_BUCKET_NAME" BUCKET_NAME
+    get_input "Environment" "$DEFAULT_ENVIRONMENT" ENVIRONMENT
+fi
 
 # Confirm settings
 echo ""
 print_header "Configuration Summary"
-echo "AWS Profile: $AWS_PROFILE"
+echo "AWS Profile: ${AWS_PROFILE:-<using GitHub Actions credentials>}"
 echo "AWS Region: $REGION"
 echo "Bucket Name: $BUCKET_NAME-<account-id>"
 echo "Environment: $ENVIRONMENT"
 echo "CloudFormation Stack: $STACK_NAME"
 echo ""
 
-read -p "$(echo -e ${YELLOW}Proceed with deployment? [y/N]: ${NC})" confirm
-if [[ ! $confirm =~ ^[Yy]$ ]]; then
-    print_warning "Deployment cancelled"
-    exit 0
+# Skip confirmation in non-interactive mode
+if [ -n "$CI" ] || [ "$NON_INTERACTIVE" = "true" ]; then
+    print_message "$YELLOW" "Auto-proceeding in non-interactive mode"
+else
+    read -p "$(echo -e ${YELLOW}Proceed with deployment? [y/N]: ${NC})" confirm
+    if [[ ! $confirm =~ ^[Yy]$ ]]; then
+        print_warning "Deployment cancelled"
+        exit 0
+    fi
 fi
 
 # Execute deployment steps

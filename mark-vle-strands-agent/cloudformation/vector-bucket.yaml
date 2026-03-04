@@ -1,0 +1,60 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template for creating an S3 Vector Bucket for Mark Vle Agent embeddings'
+
+Parameters:
+  VectorBucketName:
+    Type: String
+    Description: Name for the S3 Vector Bucket (must be globally unique, lowercase, 3-63 characters)
+    MinLength: 3
+    MaxLength: 63
+    AllowedPattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$'
+    ConstraintDescription: Bucket name must contain only lowercase letters, numbers, and hyphens
+    Default: markvie-vectors
+
+  Environment:
+    Type: String
+    Description: Environment tag for the bucket
+    Default: production
+    AllowedValues:
+      - development
+      - staging
+      - production
+      - poc
+
+Resources:
+  MarkVleVectorBucket:
+    Type: AWS::S3Vectors::VectorBucket
+    Properties:
+      VectorBucketName: !Sub '${VectorBucketName}-${AWS::AccountId}'
+      Tags:
+        - Key: Name
+          Value: !Sub '${VectorBucketName}-${AWS::AccountId}'
+        - Key: Purpose
+          Value: MarkVleRAG
+        - Key: Type
+          Value: VectorEmbeddings
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Project
+          Value: MarkVleAgent
+
+Outputs:
+  VectorBucketName:
+    Description: Name of the created S3 Vector Bucket
+    Value: !Sub '${VectorBucketName}-${AWS::AccountId}'
+    Export:
+      Name: !Sub '${AWS::StackName}-VectorBucketName'
+
+  VectorBucketArn:
+    Description: ARN of the S3 Vector Bucket
+    Value: !GetAtt MarkVleVectorBucket.VectorBucketArn
+    Export:
+      Name: !Sub '${AWS::StackName}-VectorBucketArn'
+
+  VectorBucketCreationTime:
+    Description: Creation time of the S3 Vector Bucket
+    Value: !GetAtt MarkVleVectorBucket.CreationTime
+    Export:
+      Name: !Sub '${AWS::StackName}-VectorBucketCreationTime'

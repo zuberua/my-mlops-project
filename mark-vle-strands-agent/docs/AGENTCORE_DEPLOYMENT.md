@@ -44,7 +44,7 @@ GitHub Push → GitHub Actions → Build Docker → Push to ECR → Deploy to Ag
 - **Name**: `agentcore-mark-vle-agent-execution`
 - **Purpose**: Runtime permissions for the agent
 - **Permissions**:
-  - S3: Read embeddings from `mark-vie-kb-138720056246`
+  - S3: Read embeddings from `markvie-vectors-138720056246`
   - Bedrock: Invoke Claude and Titan models
   - CloudWatch: Write logs
 
@@ -141,7 +141,7 @@ client = boto3.client('bedrock-agentcore-runtime', region_name='us-east-1')
 
 response = client.invoke_agent(
     agentName='mark-vle-agent',
-    inputText='Generate a PLC diagram for COMPARE_50'
+    inputText='What are the inputs of the TIMER block?'
 )
 
 print(response['output'])
@@ -152,7 +152,7 @@ print(response['output'])
 ```bash
 aws bedrock-agentcore-runtime invoke-agent \
   --agent-name mark-vle-agent \
-  --input-text "Generate a PLC diagram for COMPARE_50" \
+  --input-text "What are the inputs of the TIMER block?" \
   --region us-east-1
 ```
 

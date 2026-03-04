@@ -92,8 +92,8 @@ cat > /tmp/s3-policy.json <<EOF
         "s3:ListBucket"
       ],
       "Resource": [
-        "arn:aws:s3:::mark-vie-kb-138720056246",
-        "arn:aws:s3:::mark-vie-kb-138720056246/*"
+        "arn:aws:s3:::markvie-vectors-138720056246",
+        "arn:aws:s3:::markvie-vectors-138720056246/*"
       ]
     }
   ]
@@ -241,7 +241,7 @@ echo ""
 echo "Role ARN: $ROLE_ARN"
 echo ""
 echo "This role has permissions for:"
-echo "  ✓ S3 read access (mark-vie-kb-138720056246)"
+echo "  ✓ S3 read access (markvie-vectors-138720056246)"
 echo "  ✓ Bedrock model invocation"
 echo "  ✓ CloudWatch Logs"
 echo ""

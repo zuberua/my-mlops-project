@@ -1,0 +1,73 @@
+name: Deploy Mark Vle Agent to ECR
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'mark-vle-strands-agent/**'
+      - '.github/workflows/deploy-mark-vle-agent.yml'
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-west-2
+  ECR_REPOSITORY: mark-vle-agent
+  IMAGE_TAG: latest
+
+jobs:
+  deploy:
+    name: Build and Push to ECR
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+    
+    - name: Build, tag, and push image to Amazon ECR
+      working-directory: ./mark-vle-strands-agent
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        echo "Building Docker image..."
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+        docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+        
+        echo "Pushing to ECR..."
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+        
+        echo "✓ Image pushed successfully!"
+        echo "Image URI: $ECR_REGISTRY/$ECR_REPOSITORY:latest"
+        echo "Commit SHA: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+    
+    - name: Summary
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+      run: |
+        echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "✅ **Mark Vle Agent deployed successfully!**" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Image Details" >> $GITHUB_STEP_SUMMARY
+        echo "- **Repository:** $ECR_REPOSITORY" >> $GITHUB_STEP_SUMMARY
+        echo "- **Region:** $AWS_REGION" >> $GITHUB_STEP_SUMMARY
+        echo "- **Image URI:** \`$ECR_REGISTRY/$ECR_REPOSITORY:latest\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Commit SHA:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
+        echo "1. Update AgentCore agent configuration with the image URI above" >> $GITHUB_STEP_SUMMARY
+        echo "2. Ensure IAM roles have access to S3 vector bucket: \`markvie-vectors-<account-id>\`" >> $GITHUB_STEP_SUMMARY
+        echo "3. Verify agent deployment in AgentCore console" >> $GITHUB_STEP_SUMMARY

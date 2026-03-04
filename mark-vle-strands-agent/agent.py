@@ -19,7 +19,65 @@ Config.print_config()
 _session = None
 _bedrock = None
 _s3 = None
+_embeddings_cache = None  # Cache for all embeddings
 BUCKET_NAME = Config.S3_BUCKET_NAME
+
+def load_all_embeddings():
+    """Load all embeddings from S3 into memory cache (one-time operation)"""
+    global _embeddings_cache
+    
+    if _embeddings_cache is not None:
+        return _embeddings_cache
+    
+    print("[Cache] Loading all embeddings from S3...")
+    import time
+    start_time = time.time()
+    
+    _, s3 = get_aws_clients()
+    
+    _embeddings_cache = []
+    
+    # List all embedding files
+    response = s3.list_objects_v2(Bucket=BUCKET_NAME, Prefix='embeddings/blocks/')
+    
+    if 'Contents' not in response:
+        print("[Cache] No embeddings found")
+        return []
+    
+    # Get list of keys
+    keys = [obj['Key'] for obj in response['Contents'] if obj['Key'].endswith('.json')]
+    
+    # Fetch embeddings in parallel using ThreadPoolExecutor
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    
+    def fetch_embedding(key):
+        try:
+            doc_response = s3.get_object(Bucket=BUCKET_NAME, Key=key)
+            doc_data = json.loads(doc_response['Body'].read().decode('utf-8'))
+            
+            if 'embedding' in doc_data:
+                return {
+                    'filename': doc_data.get('file', key),
+                    'text': doc_data.get('text', ''),
+                    'metadata': doc_data.get('metadata', {}),
+                    'embedding': doc_data['embedding']
+                }
+        except Exception as e:
+            print(f"[Cache] Error loading {key}: {e}")
+            return None
+    
+    # Use 20 parallel threads for faster loading
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        futures = {executor.submit(fetch_embedding, key): key for key in keys}
+        
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                _embeddings_cache.append(result)
+    
+    elapsed = time.time() - start_time
+    print(f"[Cache] ✓ Loaded {len(_embeddings_cache)} embeddings in {elapsed:.2f}s")
+    return _embeddings_cache
 
 def get_aws_clients():
     """Get or create AWS clients with proper credentials"""
@@ -55,14 +113,36 @@ os.environ['AWS_DEFAULT_REGION'] = Config.AWS_REGION
 os.environ['AWS_REGION'] = Config.AWS_REGION
 
 def generate_embedding(text: str) -> List[float]:
-    """Generate embedding using Amazon Titan"""
-    bedrock, _ = get_aws_clients()
-    response = bedrock.invoke_model(
-        modelId=Config.EMBEDDING_MODEL,
-        body=json.dumps({"inputText": text})
-    )
-    result = json.loads(response['body'].read())
-    return result['embedding']
+    """Generate embedding using Amazon Titan (via LiteLLM or direct Bedrock)"""
+    
+    # Check if using LiteLLM proxy
+    if Config.LITELLM_PROXY_URL and Config.LITELLM_API_KEY:
+        # Use LiteLLM proxy for embeddings
+        import requests
+        
+        response = requests.post(
+            f"{Config.LITELLM_PROXY_URL}/embeddings",
+            headers={
+                "Authorization": f"Bearer {Config.LITELLM_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "litellm_proxy/bedrock-titan-embed-text-v2",
+                "input": text
+            }
+        )
+        response.raise_for_status()
+        result = response.json()
+        return result['data'][0]['embedding']
+    else:
+        # Use direct Bedrock
+        bedrock, _ = get_aws_clients()
+        response = bedrock.invoke_model(
+            modelId=Config.EMBEDDING_MODEL,
+            body=json.dumps({"inputText": text})
+        )
+        result = json.loads(response['body'].read())
+        return result['embedding']
 
 def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
     """Calculate cosine similarity between two vectors"""
@@ -77,7 +157,7 @@ def search_knowledge_base(query: str, max_results: int = 3) -> str:
     PLC blocks, control logic, and system configuration.
     
     Args:
-        query: The search query (e.g., "TNH-SPEED-1", "COMPARE_50", "fuel valve")
+        query: The search query (e.g., "TIMER", "ANALOG_ALARM", "array blocks")
         max_results: Maximum number of results to return (default from config)
     
     Returns:
@@ -88,68 +168,48 @@ def search_knowledge_base(query: str, max_results: int = 3) -> str:
     print(f"[Tool] Searching knowledge base for: {query}")
     
     try:
-        # Get AWS clients
-        _, s3 = get_aws_clients()
+        # Load embeddings cache (one-time operation)
+        embeddings = load_all_embeddings()
+        
+        if not embeddings:
+            return "No documents found in knowledge base."
         
         # Generate query embedding
         query_embedding = generate_embedding(query)
         
-        # List all embedding files
-        response = s3.list_objects_v2(Bucket=BUCKET_NAME, Prefix='embeddings/')
+        # Score each document from cache
+        scored_docs = []
         
-        if 'Contents' not in response:
-            return "No documents found in knowledge base."
-        
-        # Score each document chunk
-        scored_chunks = []
-        
-        for obj in response['Contents']:
-            key = obj['Key']
-            
-            if key == 'embeddings/index.json' or not key.endswith('.json'):
-                continue
-            
+        for doc in embeddings:
             try:
-                doc_response = s3.get_object(Bucket=BUCKET_NAME, Key=key)
-                doc_data = json.loads(doc_response['Body'].read().decode('utf-8'))
+                # Calculate similarity
+                similarity = cosine_similarity(query_embedding, doc['embedding'])
                 
-                # Calculate similarity for each chunk
-                for chunk in doc_data.get('chunks', []):
-                    similarity = cosine_similarity(query_embedding, chunk['embedding'])
-                    
-                    if similarity > Config.RAG_SIMILARITY_THRESHOLD:
-                        scored_chunks.append({
-                            'filename': doc_data['filename'],
-                            'title': doc_data['title'],
-                            'chunk_text': chunk['text'],
-                            'full_content': doc_data['full_content'],
-                            'similarity': similarity
-                        })
+                if similarity > Config.RAG_SIMILARITY_THRESHOLD:
+                    scored_docs.append({
+                        'filename': doc['filename'],
+                        'text': doc['text'],
+                        'metadata': doc['metadata'],
+                        'similarity': similarity
+                    })
             except Exception as e:
-                print(f"[Tool] Error processing {key}: {e}")
+                print(f"[Tool] Error processing document: {e}")
                 continue
         
-        # Sort and deduplicate
-        scored_chunks.sort(key=lambda x: x['similarity'], reverse=True)
+        # Sort by similarity
+        scored_docs.sort(key=lambda x: x['similarity'], reverse=True)
         
-        seen_files = set()
-        unique_docs = []
+        # Take top results
+        top_docs = scored_docs[:max_results]
         
-        for chunk in scored_chunks:
-            if chunk['filename'] not in seen_files:
-                seen_files.add(chunk['filename'])
-                unique_docs.append(chunk)
-                if len(unique_docs) >= max_results:
-                    break
-        
-        if not unique_docs:
+        if not top_docs:
             return f"No relevant information found for: {query}"
         
         # Format results
-        result = f"Found {len(unique_docs)} relevant documents:\n\n"
-        for i, doc in enumerate(unique_docs, 1):
-            result += f"--- Document {i}: {doc['title']} (similarity: {doc['similarity']:.2f}) ---\n"
-            result += doc['full_content']
+        result = f"Found {len(top_docs)} relevant documents:\n\n"
+        for i, doc in enumerate(top_docs, 1):
+            result += f"--- Document {i} (similarity: {doc['similarity']:.2f}) ---\n"
+            result += doc['text']
             result += "\n\n"
         
         return result
@@ -178,7 +238,7 @@ def generate_diagram(block_name: str) -> str:
     This tool retrieves block information from the knowledge base and creates a PLC-style FBD.
     
     Args:
-        block_name: Name of the block or I/O tag (e.g., "MOVE_150", "COMPARE_50", "TNH-SPEED-1")
+        block_name: Name of the block or I/O tag (e.g., "TIMER", "ANALOG_ALARM", "ADD")
     
     Returns:
         Mermaid diagram code for PLC-style FBD
@@ -211,7 +271,7 @@ def export_xml(block_name: str) -> str:
     Uses information from the knowledge base to generate accurate XML.
     
     Args:
-        block_name: Name of the block (e.g., "MOVE_150", "COMPARE_50")
+        block_name: Name of the block (e.g., "TIMER", "ANALOG_ALARM")
     
     Returns:
         XML configuration string based on knowledge base information
@@ -264,30 +324,31 @@ else:
 # Build agent kwargs
 agent_kwargs = {
     'model': model,
-    'system_prompt': """You are an expert assistant for the Mark Vle turbine control system.
+    'system_prompt': """You are an expert assistant for the Mark Vle control system.
 
-CRITICAL INSTRUCTION: When a user asks you to generate, draw, create, or show a DIAGRAM, you MUST call the generate_diagram tool. Do NOT just describe the diagram - actually call the tool to create it.
-
-You have access to a knowledge base containing:
-- I/O point specifications (analog inputs, digital outputs, etc.)
-- PLC function blocks (MOVE_150, COMPARE_50)
-- Control logic and interlocks
-- System configuration guides
+You have access to a knowledge base containing 206 Mark Vle block definitions with their inputs, outputs, states, and descriptions.
 
 Your tools and when to use them:
 
-1. search_knowledge_base - Use for questions about specifications, details, explanations
-   Example: "What is TNH-SPEED-1?" → search_knowledge_base("TNH-SPEED-1")
+1. search_knowledge_base - Use for questions about block specifications, inputs, outputs, descriptions
+   - "What are the inputs of TIMER?" → search_knowledge_base("TIMER inputs outputs")
+   - "Explain ANALOG_ALARM" → search_knowledge_base("ANALOG_ALARM")
+   - "What blocks handle arrays?" → search_knowledge_base("array blocks")
 
-2. generate_diagram - MANDATORY for any diagram request
-   Example: "Generate diagram for MOVE_150" → generate_diagram("MOVE_150")
-   Example: "Draw FBD for COMPARE_50" → generate_diagram("COMPARE_50")
-   Example: "Show diagram of TNH-SPEED-1" → generate_diagram("TNH-SPEED-1")
+2. generate_diagram - ONLY use when explicitly asked to generate/create/draw a diagram
+   - "Generate diagram for TIMER" → generate_diagram("TIMER")
+   - "Draw FBD for ANALOG_ALARM" → generate_diagram("ANALOG_ALARM")
+   - "Show me a diagram of ADD" → generate_diagram("ADD")
+   - DO NOT use for simple questions about inputs/outputs
 
 3. export_xml - Use when user wants XML configuration
-   Example: "Export XML for MOVE_150" → export_xml("MOVE_150")
+   - "Export XML for TIMER" → export_xml("TIMER")
 
-REMEMBER: If the user's message contains words like "diagram", "draw", "generate", "visualize", "FBD", "show" combined with a block name, you MUST call generate_diagram. Do not just explain - create the actual diagram!""",
+IMPORTANT: 
+- For questions about inputs, outputs, or block details, use search_knowledge_base ONLY
+- Only use generate_diagram when the user explicitly requests a visual diagram
+- Answer based on the knowledge base search results
+- If no information is found, say so clearly""",
     'tools': [search_knowledge_base, generate_diagram, export_xml]
 }
 
@@ -305,10 +366,10 @@ if __name__ == "__main__":
     
     # Test queries
     queries = [
-        "What is TNH-SPEED-1?",
-        "Show me the COMPARE_50 block",
-        "Generate a PLC diagram for MOVE_150",
-        "Export XML for COMPARE_50"
+        "What are the inputs of the TIMER block?",
+        "Explain the ANALOG_ALARM block",
+        "Generate a diagram for TIMER",
+        "What blocks handle arrays?"
     ]
     
     for query in queries:

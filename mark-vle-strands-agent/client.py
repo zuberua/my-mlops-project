@@ -70,7 +70,7 @@ class MarkVleClient:
         Generate PLC block diagram
         
         Args:
-            block_name: Name of PLC block (e.g., "COMPARE_50", "MOVE_150")
+            block_name: Name of block (e.g., "TIMER", "ANALOG_ALARM")
             
         Returns:
             Tuple of (mermaid_code, block_info)

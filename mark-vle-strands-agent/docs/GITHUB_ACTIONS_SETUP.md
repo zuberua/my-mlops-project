@@ -33,16 +33,27 @@ The workflow is located at: `.github/workflows/deploy-mark-vle-agent.yml`
 **Configuration:**
 ```yaml
 env:
-  AWS_REGION: us-east-1
+  AWS_REGION: us-west-2
   ECR_REPOSITORY: bedrock-agentcore-mcp_server
   IMAGE_TAG: latest
+  S3_BUCKET_PREFIX: markvie-vectors
 ```
+
+**Important:** The agent uses Local RAG with S3 Vector Storage. Ensure:
+- CloudFormation stack `mark-vle-vector-bucket` is deployed
+- S3 bucket `markvie-vectors-<account-id>` contains 206 embeddings
+- IAM execution role has S3 read access to the vector bucket
 
 ### 3. Deploy
 
 **Option A: Automatic (on push)**
 ```bash
-cd my-mls-project
+# Ensure CloudFormation stack is deployed first
+cd my-mlops-project/mark-vle-strands-agent
+./scripts/setup_vector_bucket_and_kb.sh
+
+# Then push to trigger deployment
+cd my-mlops-project
 git add mark-vle-strands-agent/
 git commit -m "Deploy Mark Vle Agent"
 git push origin main
@@ -87,11 +98,14 @@ Each workflow runs independently based on its triggers.
 
 ## Workflow Features
 
-- ✓ Builds Docker image in GitHub's cloud runners
+- ✓ Builds Docker image for ARM64 (AgentCore requirement)
 - ✓ Pushes to your ECR repository
 - ✓ Tags with both commit SHA and 'latest'
 - ✓ Only triggers when mark-vle-strands-agent files change
 - ✓ Can be manually triggered anytime
+- ✓ Deploys to AgentCore Runtime automatically
+- ✓ Validates S3 vector bucket access
+- ✓ Uses Local RAG with 206 cached embeddings
 
 ## Troubleshooting
 
@@ -114,6 +128,21 @@ ECR_REPOSITORY: bedrock-agentcore-mcp_server
 Ensure your AWS credentials have permissions to:
 - Push to ECR
 - Login to ECR
+- Read from S3 vector bucket (`markvie-vectors-<account-id>`)
+- Invoke Bedrock models
+
+### S3 Vector Bucket not found
+
+Ensure the CloudFormation stack is deployed:
+```bash
+cd mark-vle-strands-agent
+./scripts/setup_vector_bucket_and_kb.sh
+```
+
+Verify the bucket exists:
+```bash
+aws s3 ls s3://markvie-vectors-<account-id>/embeddings/blocks/ --profile your-profile
+```
 
 ### Workflow not triggering
 

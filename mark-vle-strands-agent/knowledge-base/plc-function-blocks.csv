@@ -1,9 +1,0 @@
-BlockName,BlockType,PinName,PinDirection,Device,Value,DataType,Range,Description,Logic,Purpose,Interlocks,StatusCode
-MOVE_150,MOVE,SRC,INPUT,bz23y_a,0,BOOL,0-1,Source trigger input for MOVE operation,When TRUE triggers data transfer from source to destination,Initiates position value transfer to output,ENABLE must be TRUE,2
-MOVE_150,MOVE,EN,INPUT,ENABLE,TRUE,BOOL,0-1,Enable signal for MOVE instruction,Must be TRUE for block to execute,Safety enable for MOVE operation,System ready state,2
-MOVE_150,MOVE,DEST,OUTPUT,BZ23Y,0.00,REAL,0-100 mils,Destination output for position value,Receives value from SRC when both inputs are TRUE,Position control output for actuator,bz23y_a AND ENABLE,2
-COMPARE_50,COMPARE,FUNC,INPUT,BT,GT,STRING,GT/LT/EQ/GE/LE/NE,Comparison function selector,Determines type of comparison operation (Greater Than selected),Selects comparison logic type,None,6
-COMPARE_50,COMPARE,IN1,INPUT,BZ23Y,0.00,REAL,0-100 mils,First comparison input value,Current position value from BZ23Y output,Primary comparison operand,None,6
-COMPARE_50,COMPARE,IN2,INPUT,LP45T,7.4,REAL,0-100 mils,Second comparison input value (setpoint),Target position setpoint for comparison,Secondary comparison operand (reference),None,6
-COMPARE_50,COMPARE,SENS,INPUT,Constant,0,REAL,0-10 mils,Sensitivity/deadband for comparison,Tolerance value for comparison hysteresis,Prevents chattering on boundary conditions,None,6
-COMPARE_50,COMPARE,OUT,OUTPUT,GT,FALSE,BOOL,0-1,Comparison result output,Result of IN1 > IN2 + SENS evaluation (0.00 > 7.4 = FALSE),Boolean output indicating comparison result,FUNC must be valid,6

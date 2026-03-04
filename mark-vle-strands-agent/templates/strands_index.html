@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mark Vle Strands Agent</title>
+    <title>Mark Vle Agent - Control System AI Assistant</title>
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <style>
         * {
@@ -222,8 +222,9 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🚀 Mark Vle Strands Agent</h1>
-            <p>AI Assistant for Turbine Control System with PLC Diagram Generation</p>
+            <h1>⚡ Mark Vle Agent</h1>
+            <p>AI Assistant for Mark Vle Control System • 206 Block Definitions • Local RAG with S3 Vector Storage</p>
+            <p style="font-size: 0.9em; margin-top: 8px; opacity: 0.85;">Powered by Claude 3.5 Haiku via Amazon Bedrock</p>
         </div>
         
         <div class="main-content">
@@ -232,27 +233,27 @@
                 <h2>💬 Chat with Agent</h2>
                 <div id="chat-messages"></div>
                 <div class="input-group">
-                    <input type="text" id="user-input" placeholder="Ask about I/O points, PLC blocks, or control logic..." />
+                    <input type="text" id="user-input" placeholder="Ask about Mark Vle blocks, inputs/outputs, or control logic..." />
                     <button id="send-btn" onclick="sendMessage()">Send</button>
                 </div>
                 <div class="examples">
-                    <button class="example-btn" onclick="sendExample('What is TNH-SPEED-1?')">TNH-SPEED-1</button>
-                    <button class="example-btn" onclick="sendExample('Tell me about COMPARE_50')">COMPARE_50</button>
-                    <button class="example-btn" onclick="sendExample('Explain MOVE_150')">MOVE_150</button>
-                    <button class="example-btn" onclick="sendExample('Generate diagram for MOVE_150')">Diagram MOVE_150</button>
+                    <button class="example-btn" onclick="sendExample('What are the inputs of the TIMER block?')">TIMER inputs</button>
+                    <button class="example-btn" onclick="sendExample('Explain the ANALOG_ALARM block')">ANALOG_ALARM</button>
+                    <button class="example-btn" onclick="sendExample('What blocks are available for array operations?')">Array blocks</button>
+                    <button class="example-btn" onclick="sendExample('Generate diagram for TIMER')">TIMER diagram</button>
                 </div>
             </div>
             
             <!-- Diagram Panel -->
             <div class="panel">
-                <h2>📊 PLC Block Diagram</h2>
+                <h2>📊 Block Diagram Generator</h2>
                 <div class="input-group" style="margin-bottom: 15px;">
-                    <input type="text" id="block-name" placeholder="Enter block name (e.g., MOVE_150, COMPARE_50)" />
+                    <input type="text" id="block-name" placeholder="Enter block name (e.g., TIMER, ANALOG_ALARM, ADD)" />
                     <button onclick="generateDiagram()">Generate</button>
                 </div>
                 <div id="diagram-container">
                     <p style="text-align: center; color: #999; padding: 50px;">
-                        Enter a block name and click Generate to see the PLC diagram
+                        Enter a Mark Vle block name to generate a Mermaid diagram showing inputs, outputs, and logic flow
                     </p>
                 </div>
             </div>

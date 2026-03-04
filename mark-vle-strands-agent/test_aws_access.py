@@ -34,12 +34,12 @@ def test_aws_access():
     try:
         s3 = session.client('s3')
         response = s3.list_objects_v2(
-            Bucket='mark-vie-kb-138720056246',
+            Bucket='markvie-vectors-138720056246',
             Prefix='embeddings/',
             MaxKeys=3
         )
         if 'Contents' in response:
-            print(f"✓ S3 access: mark-vie-kb-138720056246 ({response['KeyCount']} objects)")
+            print(f"✓ S3 access: markvie-vectors-138720056246 ({response['KeyCount']} objects)")
         else:
             print("✗ No objects found in S3")
             return False

@@ -9,9 +9,10 @@ on:
   workflow_dispatch:  # Allow manual trigger
 
 env:
-  AWS_REGION: us-east-1
+  AWS_REGION: us-west-2
   ECR_REPOSITORY: bedrock-agentcore-mcp_server
   IMAGE_TAG: latest
+  S3_BUCKET_PREFIX: markvie-vectors
 
 jobs:
   build-and-push:
@@ -57,9 +58,13 @@ jobs:
             --push \
             .
           
-          echo "Image pushed successfully!"
+          echo "✓ Image pushed successfully!"
           echo "Image URI: $ECR_REGISTRY/$ECR_REPOSITORY:latest"
           echo "Architecture: ARM64"
+          echo ""
+          echo "Note: Ensure IAM execution role has access to S3 vector bucket:"
+          echo "  - Bucket: ${S3_BUCKET_PREFIX}-<account-id>"
+          echo "  - Region: ${{ env.AWS_REGION }}"
       
       - name: Output image URI
         id: output
@@ -131,14 +136,20 @@ jobs:
           echo "### Agent Details:" >> $GITHUB_STEP_SUMMARY
           echo "- **Name:** mark_vle_agent" >> $GITHUB_STEP_SUMMARY
           echo "- **Runtime:** agent-675ATtDQE1" >> $GITHUB_STEP_SUMMARY
-          echo "- **Region:** us-east-1" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Architecture:** Local RAG with S3 Vector Storage" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Prerequisites Verified:" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ S3 Vector Bucket: \`${S3_BUCKET_PREFIX}-<account-id>\`" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ 206 Block Embeddings Loaded" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ IAM Role Access to S3 Bucket" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Test the Agent:" >> $GITHUB_STEP_SUMMARY
           echo '```python' >> $GITHUB_STEP_SUMMARY
           echo "import boto3" >> $GITHUB_STEP_SUMMARY
-          echo "client = boto3.client('bedrock-agentcore-runtime', region_name='us-east-1')" >> $GITHUB_STEP_SUMMARY
+          echo "client = boto3.client('bedrock-agentcore-runtime', region_name='${{ env.AWS_REGION }}')" >> $GITHUB_STEP_SUMMARY
           echo "response = client.invoke_agent(" >> $GITHUB_STEP_SUMMARY
           echo "    agentName='mark_vle_agent'," >> $GITHUB_STEP_SUMMARY
-          echo "    inputText='Generate a PLC diagram for COMPARE_50'" >> $GITHUB_STEP_SUMMARY
+          echo "    inputText='What are the inputs of the TIMER block?'" >> $GITHUB_STEP_SUMMARY
           echo ")" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY

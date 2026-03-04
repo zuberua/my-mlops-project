@@ -7,66 +7,79 @@ import re
 
 def parse_plc_block_from_text(text):
     """
-    Parse PLC block information from RAG text response
+    Parse block information from RAG markdown text response
     Returns dict with block info
     """
     block_info = {
         'name': None,
         'type': None,
+        'category': None,
+        'description': None,
         'inputs': [],
         'outputs': [],
-        'status': None
+        'states': []
     }
     
-    text_upper = text.upper()
+    # Extract block name from markdown header (e.g., "# TIMER - Timer")
+    block_name_match = re.search(r'#\s+([A-Z_0-9]+)\s*-\s*(.+)', text)
+    if block_name_match:
+        block_info['name'] = block_name_match.group(1)
+        block_info['type'] = block_name_match.group(1)
+        block_info['description'] = block_name_match.group(2).strip()
     
-    # Extract block name and type - check multiple variations
-    if 'MOVE_150' in text_upper or 'MOVE-150' in text_upper or 'MOVE 150' in text_upper:
-        block_info['name'] = 'MOVE_150'
-        block_info['type'] = 'MOVE'
-    elif 'COMPARE_50' in text_upper or 'COMPARE-50' in text_upper or 'COMPARE 50' in text_upper:
-        block_info['name'] = 'COMPARE_50'
-        block_info['type'] = 'COMPARE'
-    elif 'MOVE' in text_upper and 'BLOCK' in text_upper:
-        block_info['name'] = 'MOVE_150'
-        block_info['type'] = 'MOVE'
-    elif 'COMPARE' in text_upper and 'BLOCK' in text_upper:
-        block_info['name'] = 'COMPARE_50'
-        block_info['type'] = 'COMPARE'
+    # Extract category
+    category_match = re.search(r'\*\*Category:\*\*\s+(.+)', text)
+    if category_match:
+        block_info['category'] = category_match.group(1).strip()
     
-    # Extract status code
-    status_match = re.search(r'Status Code[:\s]+(\d+)', text, re.IGNORECASE)
-    if status_match:
-        block_info['status'] = status_match.group(1)
+    # Extract description
+    desc_match = re.search(r'\*\*Description:\*\*\s+(.+)', text)
+    if desc_match:
+        block_info['description'] = desc_match.group(1).strip()
     
-    # Parse pins from table or text
-    lines = text.split('\n')
-    for i, line in enumerate(lines):
-        line_upper = line.upper()
+    # Parse Inputs section
+    inputs_section = re.search(r'##\s+Inputs\s*\n(.*?)(?=##|\Z)', text, re.DOTALL)
+    if inputs_section:
+        inputs_text = inputs_section.group(1)
+        # Look for bullet points with input definitions
+        # Format: - **NAME** (TYPE): Description
+        input_matches = re.findall(r'-\s+\*\*([A-Z_0-9]+)\*\*\s+\(([^)]+)\):\s*(.+)', inputs_text)
+        for name, data_type, description in input_matches:
+            block_info['inputs'].append({
+                'name': name,
+                'data_type': data_type,
+                'description': description.strip()
+            })
         
-        # Look for pin information
-        if 'FUNC' in line_upper and 'BT' in line_upper:
-            block_info['inputs'].append({'name': 'FUNC', 'device': 'BT', 'value': 'GT'})
-        if 'SRC' in line_upper and ('BZ23Y_A' in line_upper or 'BZ23Y-A' in line_upper):
-            block_info['inputs'].append({'name': 'SRC', 'device': 'bz23y_a', 'value': '0'})
-        if ('EN' in line_upper or 'ENABLE' in line_upper) and 'INPUT' in line_upper:
-            block_info['inputs'].append({'name': 'EN', 'device': 'ENABLE', 'value': 'TRUE'})
-        if 'IN1' in line_upper and 'BZ23Y' in line_upper:
-            value_match = re.search(r'(\d+\.?\d*)\s*mils?', line, re.IGNORECASE)
-            value = value_match.group(1) if value_match else '0.00'
-            block_info['inputs'].append({'name': 'IN1', 'device': 'BZ23Y', 'value': f'{value} mils'})
-        if 'IN2' in line_upper and 'LP45T' in line_upper:
-            value_match = re.search(r'(\d+\.?\d*)\s*mils?', line, re.IGNORECASE)
-            value = value_match.group(1) if value_match else '7.4'
-            block_info['inputs'].append({'name': 'IN2', 'device': 'LP45T', 'value': f'{value} mils'})
-        if 'SENS' in line_upper and 'CONSTANT' in line_upper:
-            block_info['inputs'].append({'name': 'SENS', 'device': 'Constant', 'value': '0'})
-        if 'DEST' in line_upper and 'BZ23Y' in line_upper and 'OUTPUT' in line_upper:
-            value_match = re.search(r'(\d+\.?\d*)\s*mils?', line, re.IGNORECASE)
-            value = value_match.group(1) if value_match else '0.00'
-            block_info['outputs'].append({'name': 'DEST', 'device': 'BZ23Y', 'value': f'{value} mils'})
-        if 'OUT' in line_upper and 'GT' in line_upper and 'OUTPUT' in line_upper:
-            block_info['outputs'].append({'name': 'OUT', 'device': 'GT', 'value': 'FALSE'})
+        # Check for "None" or empty
+        if 'None' in inputs_text or not input_matches:
+            block_info['inputs'] = []
+    
+    # Parse Outputs section
+    outputs_section = re.search(r'##\s+Outputs\s*\n(.*?)(?=##|\Z)', text, re.DOTALL)
+    if outputs_section:
+        outputs_text = outputs_section.group(1)
+        # Format: - **NAME** (TYPE): Description
+        output_matches = re.findall(r'-\s+\*\*([A-Z_0-9]+)\*\*\s+\(([^)]+)\):\s*(.+)', outputs_text)
+        for name, data_type, description in output_matches:
+            block_info['outputs'].append({
+                'name': name,
+                'data_type': data_type,
+                'description': description.strip()
+            })
+    
+    # Parse States section
+    states_section = re.search(r'##\s+States\s*\n(.*?)(?=##|\Z)', text, re.DOTALL)
+    if states_section:
+        states_text = states_section.group(1)
+        # Format: - **NAME** (TYPE): Description
+        state_matches = re.findall(r'-\s+\*\*([A-Z_0-9]+)\*\*\s+\(([^)]+)\):\s*(.+)', states_text)
+        for name, data_type, description in state_matches:
+            block_info['states'].append({
+                'name': name,
+                'data_type': data_type,
+                'description': description.strip()
+            })
     
     return block_info
 
@@ -77,19 +90,106 @@ def generate_plc_block_from_rag(text):
     # If no block detected, return a message
     if not block_info['name']:
         return """flowchart TD
-    A["No PLC block detected in response"]
-    B["Try fetching: MOVE_150 or COMPARE_50"]
+    A["No block detected in response"]
+    B["Try searching for a valid block name"]
     A --> B
     style A fill:#ffebee,stroke:#c62828
     style B fill:#fff3e0,stroke:#ef6c00
 """
     
-    if block_info['type'] == 'MOVE':
-        return generate_move_block_dynamic(block_info)
-    elif block_info['type'] == 'COMPARE':
-        return generate_compare_block_dynamic(block_info)
+    # Generate generic block diagram
+    return generate_generic_block(block_info)
+
+def generate_generic_block(block_info):
+    """Generate a generic block diagram from parsed info"""
+    block_name = block_info.get('name', 'UNKNOWN')
+    category = block_info.get('category', 'General')
+    description = block_info.get('description', '')
+    inputs = block_info.get('inputs', [])
+    outputs = block_info.get('outputs', [])
+    states = block_info.get('states', [])
+    
+    mermaid = f"""flowchart LR
+    %% {block_name} Block
+    %% Category: {category}
+    %% Description: {description}
+    
+"""
+    
+    # Create input nodes (left side)
+    if inputs:
+        for inp in inputs:
+            inp_name = inp['name']
+            inp_type = inp.get('data_type', 'UNKNOWN')
+            mermaid += f"    {inp_name}_IN[\"{inp_name}<br/>({inp_type})\"]\n"
+    
+    # Create main block
+    mermaid += f"""    
+    subgraph {block_name}[\"{block_name}\"]
+        direction TB
+"""
+    
+    # Add inputs inside block
+    if inputs:
+        for inp in inputs:
+            inp_name = inp['name']
+            mermaid += f"        {inp_name}[\"{inp_name}\"]\n"
     else:
-        return generate_plc_move_block()  # Fallback
+        mermaid += f"        NO_INPUTS[\"No Inputs\"]\n"
+    
+    # Add separator
+    if inputs and outputs:
+        mermaid += f"        ---\n"
+    
+    # Add outputs inside block
+    if outputs:
+        for out in outputs:
+            out_name = out['name']
+            mermaid += f"        {out_name}[\"{out_name}\"]\n"
+    
+    # Add states if any
+    if states:
+        mermaid += f"        ---\n"
+        for state in states:
+            state_name = state['name']
+            mermaid += f"        {state_name}[\"{state_name}\"]\n"
+    
+    mermaid += f"    end\n\n"
+    
+    # Create output nodes (right side)
+    if outputs:
+        for out in outputs:
+            out_name = out['name']
+            out_type = out.get('data_type', 'UNKNOWN')
+            out_desc = out.get('description', '')[:30]
+            mermaid += f"    {out_name}_OUT[\"{out_name}<br/>({out_type})<br/>{out_desc}...\"]\n"
+    
+    # Connect inputs to block
+    if inputs:
+        for inp in inputs:
+            inp_name = inp['name']
+            mermaid += f"    {inp_name}_IN --> {inp_name}\n"
+    
+    # Connect block to outputs
+    if outputs:
+        for out in outputs:
+            out_name = out['name']
+            mermaid += f"    {out_name} --> {out_name}_OUT\n"
+    
+    # Styling
+    mermaid += f"""
+    style {block_name} fill:#e3f2fd,stroke:#1976d2,stroke-width:3px
+"""
+    
+    if inputs:
+        for inp in inputs:
+            mermaid += f"    style {inp['name']}_IN fill:#fff3e0,stroke:#f57c00,stroke-width:2px\n"
+    
+    if outputs:
+        for out in outputs:
+            mermaid += f"    style {out['name']}_OUT fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px\n"
+    
+    return mermaid
 
 def generate_move_block_dynamic(block_info):
     """Generate MOVE block from parsed info - detailed layout"""

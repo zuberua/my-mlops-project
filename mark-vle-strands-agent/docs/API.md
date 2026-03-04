@@ -59,15 +59,15 @@ Generate a Mermaid diagram for a specific PLC block.
 **Request**:
 ```json
 {
-  "blockName": "COMPARE_50"
+  "blockName": "TIMER"
 }
 ```
 
 **Response**:
 ```json
 {
-  "mermaid": "flowchart LR\n    IN1[Input 1] --> COMPARE[COMPARE_50]\n    ...",
-  "blockInfo": "Found 1 relevant documents:\n\n--- Document 1: COMPARE_50 Block..."
+  "mermaid": "flowchart LR\n    IN[Input] --> TIMER[TIMER]\n    ...",
+  "blockInfo": "Found 1 relevant documents:\n\n--- Document 1: TIMER Block..."
 }
 ```
 
@@ -75,7 +75,7 @@ Generate a Mermaid diagram for a specific PLC block.
 ```bash
 curl -X POST http://localhost:5001/api/generate-plc-diagram \
   -H "Content-Type: application/json" \
-  -d '{"blockName": "COMPARE_50"}'
+  -d '{"blockName": "TIMER"}'
 ```
 
 **Example (Python)**:
@@ -84,7 +84,7 @@ import requests
 
 response = requests.post(
     'http://localhost:5001/api/generate-plc-diagram',
-    json={'blockName': 'COMPARE_50'}
+    json={'blockName': 'TIMER'}
 )
 
 data = response.json()
@@ -112,7 +112,7 @@ Get current agent configuration.
   "litellmProxy": "Not configured",
   "litellmModel": "litellm_proxy/bedrock-claude-sonnet-4.5",
   "awsRegion": "us-west-2",
-  "s3Bucket": "mark-vie-kb-138720056246",
+  "s3Bucket": "markvie-vectors-138720056246",
   "embeddingModel": "amazon.titan-embed-text-v2:0"
 }
 ```
@@ -162,15 +162,15 @@ def generate_plc_diagram(block_name: str) -> dict:
     return response.json()
 
 # Example usage
-result = generate_plc_diagram("COMPARE_50")
+result = generate_plc_diagram("TIMER")
 mermaid_code = result['mermaid']
 block_info = result['blockInfo']
 
 # Save diagram to file
-with open('compare_50.mmd', 'w') as f:
+with open('timer.mmd', 'w') as f:
     f.write(mermaid_code)
 
-print(f"Diagram saved to compare_50.mmd")
+print(f"Diagram saved to timer.mmd")
 print(f"Block info: {block_info}")
 ```
 
@@ -213,12 +213,12 @@ class MarkVleClient:
 client = MarkVleClient()
 
 # Step 1: Search for block
-info = client.chat("Tell me about COMPARE_50")
+info = client.chat("Tell me about the TIMER block")
 print("Block Information:")
 print(info)
 
 # Step 2: Generate diagram
-diagram = client.generate_diagram("COMPARE_50")
+diagram = client.generate_diagram("TIMER")
 print("\nMermaid Diagram:")
 print(diagram['mermaid'])
 
@@ -231,16 +231,16 @@ print(f"\nUsing S3 bucket: {config['s3Bucket']}")
 
 ## Supported Block Names
 
-Common PLC blocks in the knowledge base:
-- `COMPARE_50` - Comparison block
-- `MOVE_150` - Move/transfer block
-- `TNH-SPEED-1` - Speed sensor input
-- `FSV-MAIN-SOL` - Fuel solenoid valve
-- `FUEL-VALVE-CMD` - Fuel valve command
+Common blocks in the knowledge base:
+- `TIMER` - Timer block
+- `ANALOG_ALARM` - Analog alarm monitoring
+- `ADD` - Addition operation
+- `ABS` - Absolute value
+- `ARRAY_AVERAGE` - Array averaging
 
 To find available blocks, ask the agent:
 ```python
-response = client.chat("List all available PLC blocks")
+response = client.chat("List all available blocks")
 ```
 
 ---
@@ -335,13 +335,13 @@ if __name__ == '__main__':
     agent = MarkVleIntegration()
     
     # Example 1: Ask about a component
-    print("Question: What is TNH-SPEED-1?")
-    answer = agent.ask("What is TNH-SPEED-1?")
+    print("Question: What are the inputs of the TIMER block?")
+    answer = agent.ask("What are the inputs of the TIMER block?")
     print(f"Answer: {answer}\n")
     
     # Example 2: Generate diagram
-    print("Generating diagram for COMPARE_50...")
-    mermaid, info = agent.get_diagram("COMPARE_50")
+    print("Generating diagram for TIMER...")
+    mermaid, info = agent.get_diagram("TIMER")
     print(f"Mermaid code:\n{mermaid}\n")
     print(f"Block info:\n{info}")
 ```

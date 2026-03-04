@@ -151,7 +151,7 @@ GITHUB_ORG=zuberua
 GITHUB_REPO=my-mlops-project
 RUNTIME_ID=agent-675ATtDQE1
 AGENT_NAME=mark-vle-agent
-S3_BUCKET=mark-vie-kb-138720056246
+S3_BUCKET=markvie-vectors-138720056246
 ECR_REPOSITORY=bedrock-agentcore-mcp_server
 ```
 

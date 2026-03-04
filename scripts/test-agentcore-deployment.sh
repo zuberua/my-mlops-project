@@ -139,7 +139,7 @@ echo "=========================================="
 echo "Test 6: S3 Knowledge Base"
 echo "=========================================="
 
-S3_BUCKET="mark-vie-kb-138720056246"
+S3_BUCKET="markvie-vectors-138720056246"
 
 if aws s3 ls s3://$S3_BUCKET &>/dev/null; then
     echo -e "${GREEN}✓${NC} S3 bucket exists: $S3_BUCKET"

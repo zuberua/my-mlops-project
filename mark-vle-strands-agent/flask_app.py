@@ -24,6 +24,16 @@ CORS(app)
 # Load configuration
 Config.print_config()
 
+# Preload embeddings cache on startup
+print("\n" + "="*60)
+print("Preloading embeddings cache...")
+print("="*60)
+from agent import load_all_embeddings
+load_all_embeddings()
+print("="*60)
+print("✓ Ready to serve requests")
+print("="*60 + "\n")
+
 @app.route('/')
 def index():
     """Render main UI"""
@@ -107,4 +117,4 @@ if __name__ == '__main__':
     print("Open http://localhost:5001 in your browser")
     print("="*60)
     
-    app.run(host='0.0.0.0', port=5001, debug=True)
+    app.run(host='0.0.0.0', port=5001, debug=False, use_reloader=False)

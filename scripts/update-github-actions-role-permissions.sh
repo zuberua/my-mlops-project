@@ -43,8 +43,8 @@ cat > /tmp/agentcore-policy.json <<EOF
         "s3:ListBucket"
       ],
       "Resource": [
-        "arn:aws:s3:::mark-vie-kb-138720056246",
-        "arn:aws:s3:::mark-vie-kb-138720056246/*"
+        "arn:aws:s3:::markvie-vectors-138720056246",
+        "arn:aws:s3:::markvie-vectors-138720056246/*"
       ]
     },
     {
@@ -137,7 +137,7 @@ echo "Policy: $AGENTCORE_POLICY_NAME"
 echo ""
 echo "The role now has permissions for:"
 echo "  ✓ ECR (push/pull images)"
-echo "  ✓ S3 (read from mark-vie-kb-138720056246)"
+echo "  ✓ S3 (read from markvie-vectors-138720056246)"
 echo "  ✓ Bedrock (invoke models)"
 echo "  ✓ AgentCore Control (create/update agents)"
 echo "  ✓ IAM PassRole (for AgentCore execution role)"

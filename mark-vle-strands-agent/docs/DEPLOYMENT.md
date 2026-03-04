@@ -50,7 +50,7 @@ After the image is pushed, update your AgentCore agent configuration:
 
 **Environment Variables**:
 - `AWS_REGION=us-west-2` (for S3 bucket access)
-- `S3_BUCKET_NAME=mark-vie-kb-138720056246`
+- `S3_BUCKET_NAME=markvie-vectors-138720056246`
 - `EMBEDDING_MODEL=amazon.titan-embed-text-v2:0`
 
 **IAM Permissions Required**:
@@ -65,8 +65,8 @@ After the image is pushed, update your AgentCore agent configuration:
         "s3:ListBucket"
       ],
       "Resource": [
-        "arn:aws:s3:::mark-vie-kb-138720056246",
-        "arn:aws:s3:::mark-vie-kb-138720056246/*"
+        "arn:aws:s3:::markvie-vectors-138720056246",
+        "arn:aws:s3:::markvie-vectors-138720056246/*"
       ]
     },
     {
@@ -107,7 +107,7 @@ eval $(aws configure export-credentials --profile zuberua-Admin --format env)
 # Run container
 docker run -p 8080:8080 \
   -e AWS_REGION=us-west-2 \
-  -e S3_BUCKET_NAME=mark-vie-kb-138720056246 \
+  -e S3_BUCKET_NAME=markvie-vectors-138720056246 \
   -e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \
   -e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
   -e AWS_SESSION_TOKEN=$AWS_SESSION_TOKEN \

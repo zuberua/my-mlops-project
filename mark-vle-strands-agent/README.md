@@ -2,7 +2,7 @@
 
 AI agent for Mark Vle control system using Amazon Bedrock with S3-based vector RAG.
 
-<!-- Pipeline trigger: Fixed print_message function order in setup script -->
+<!-- Pipeline trigger: Fixed AWS CLI profile handling for CI/CD -->
 
 ## Features
 

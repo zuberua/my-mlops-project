@@ -143,14 +143,14 @@ deploy_stack() {
                 ParameterKey=VectorBucketName,ParameterValue="$BUCKET_NAME" \
                 ParameterKey=Environment,ParameterValue="$ENVIRONMENT" \
             --region "$REGION" \
-            $(aws_profile_arg) \
+            --profile "$AWS_PROFILE" \
             --capabilities CAPABILITY_IAM
         
         if [ $? -eq 0 ]; then
             wait_for_stack "update"
         else
             # Check if no updates are needed
-            if aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" $(aws_profile_arg) &> /dev/null; then
+            if aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" --profile "$AWS_PROFILE" &> /dev/null; then
                 print_warning "No updates needed for the stack"
             else
                 print_error "Failed to update stack"
@@ -167,7 +167,7 @@ deploy_stack() {
                 ParameterKey=VectorBucketName,ParameterValue="$BUCKET_NAME" \
                 ParameterKey=Environment,ParameterValue="$ENVIRONMENT" \
             --region "$REGION" \
-            $(aws_profile_arg) \
+            --profile "$AWS_PROFILE" \
             --capabilities CAPABILITY_IAM
         
         if [ $? -eq 0 ]; then
@@ -186,14 +186,14 @@ get_stack_outputs() {
     FULL_BUCKET_NAME=$(aws cloudformation describe-stacks \
         --stack-name "$STACK_NAME" \
         --region "$REGION" \
-        $(aws_profile_arg) \
+        --profile "$AWS_PROFILE" \
         --query 'Stacks[0].Outputs[?OutputKey==`VectorBucketName`].OutputValue' \
         --output text)
     
     BUCKET_ARN=$(aws cloudformation describe-stacks \
         --stack-name "$STACK_NAME" \
         --region "$REGION" \
-        $(aws_profile_arg) \
+        --profile "$AWS_PROFILE" \
         --query 'Stacks[0].Outputs[?OutputKey==`VectorBucketArn`].OutputValue' \
         --output text)
     

@@ -37,6 +37,144 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: GitHubActions-MarkVleAgent
       
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install Python dependencies
+        working-directory: ./mark-vle-strands-agent
+        run: |
+          pip install boto3 numpy
+      
+      - name: Setup S3 Vector Bucket and Knowledge Base
+        working-directory: ./mark-vle-strands-agent
+        env:
+          AWS_PROFILE: ""  # Use GitHub Actions credentials
+        run: |
+          echo "Setting up S3 Vector Bucket and Knowledge Base..."
+          
+          # Make script executable
+          chmod +x scripts/setup_vector_bucket_and_kb.sh
+          
+          # Run setup with non-interactive mode
+          export AWS_REGION=${{ env.AWS_REGION }}
+          export BUCKET_NAME=${{ env.S3_BUCKET_PREFIX }}
+          export ENVIRONMENT=production
+          export STACK_NAME=mark-vle-vector-bucket
+          
+          # Check if stack exists
+          if aws cloudformation describe-stacks --stack-name $STACK_NAME --region $AWS_REGION 2>/dev/null; then
+            echo "✓ CloudFormation stack already exists"
+          else
+            echo "Creating CloudFormation stack..."
+            aws cloudformation create-stack \
+              --stack-name $STACK_NAME \
+              --template-body file://cloudformation/vector-bucket.yaml \
+              --parameters \
+                ParameterKey=VectorBucketName,ParameterValue=$BUCKET_NAME \
+                ParameterKey=Environment,ParameterValue=$ENVIRONMENT \
+              --region $AWS_REGION
+            
+            echo "Waiting for stack creation..."
+            aws cloudformation wait stack-create-complete \
+              --stack-name $STACK_NAME \
+              --region $AWS_REGION
+            
+            echo "✓ Stack created successfully"
+          fi
+          
+          # Get bucket name from stack
+          FULL_BUCKET_NAME=$(aws cloudformation describe-stacks \
+            --stack-name $STACK_NAME \
+            --region $AWS_REGION \
+            --query 'Stacks[0].Outputs[?OutputKey==`VectorBucketName`].OutputValue' \
+            --output text)
+          
+          echo "Bucket Name: $FULL_BUCKET_NAME"
+          
+          # Check if embeddings already exist
+          EMBEDDING_COUNT=$(aws s3 ls s3://$FULL_BUCKET_NAME/embeddings/blocks/ 2>/dev/null | wc -l || echo "0")
+          
+          if [ "$EMBEDDING_COUNT" -gt 200 ]; then
+            echo "✓ Embeddings already exist ($EMBEDDING_COUNT files)"
+          else
+            echo "Generating and uploading embeddings..."
+            export S3_BUCKET_NAME=$FULL_BUCKET_NAME
+            python3 scripts/process_block_library.py
+            echo "✓ Embeddings uploaded successfully"
+          fi
+          
+          echo "✓ S3 Vector Bucket and Knowledge Base setup complete"
+      
+      - name: Verify Setup
+        working-directory: ./mark-vle-strands-agent
+        run: |
+          echo "Verifying setup..."
+          
+          # Get stack name and bucket
+          STACK_NAME=mark-vle-vector-bucket
+          FULL_BUCKET_NAME=$(aws cloudformation describe-stacks \
+            --stack-name $STACK_NAME \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`VectorBucketName`].OutputValue' \
+            --output text)
+          
+          echo "1. Checking CloudFormation stack..."
+          STACK_STATUS=$(aws cloudformation describe-stacks \
+            --stack-name $STACK_NAME \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Stacks[0].StackStatus' \
+            --output text)
+          
+          if [ "$STACK_STATUS" == "CREATE_COMPLETE" ] || [ "$STACK_STATUS" == "UPDATE_COMPLETE" ]; then
+            echo "   ✓ Stack status: $STACK_STATUS"
+          else
+            echo "   ✗ Stack status: $STACK_STATUS"
+            exit 1
+          fi
+          
+          echo "2. Checking S3 bucket access..."
+          if aws s3 ls s3://$FULL_BUCKET_NAME/ > /dev/null 2>&1; then
+            echo "   ✓ Can access bucket: $FULL_BUCKET_NAME"
+          else
+            echo "   ✗ Cannot access bucket: $FULL_BUCKET_NAME"
+            exit 1
+          fi
+          
+          echo "3. Checking embeddings..."
+          EMBEDDING_COUNT=$(aws s3 ls s3://$FULL_BUCKET_NAME/embeddings/blocks/ | wc -l | tr -d ' ')
+          
+          if [ "$EMBEDDING_COUNT" -ge 200 ]; then
+            echo "   ✓ Found $EMBEDDING_COUNT embeddings"
+          else
+            echo "   ✗ Only found $EMBEDDING_COUNT embeddings (expected 206)"
+            exit 1
+          fi
+          
+          echo "4. Checking knowledge base JSON..."
+          if [ -f "knowledge-base/markvie_block_library.json" ]; then
+            BLOCK_COUNT=$(python3 -c "import json; print(len(json.load(open('knowledge-base/markvie_block_library.json'))))")
+            echo "   ✓ Knowledge base has $BLOCK_COUNT blocks"
+          else
+            echo "   ✗ Knowledge base JSON not found"
+            exit 1
+          fi
+          
+          echo "5. Checking Bedrock access..."
+          if aws bedrock list-foundation-models --region ${{ env.AWS_REGION }} --query 'modelSummaries[?contains(modelId, `claude`)].modelId' --output text > /dev/null 2>&1; then
+            echo "   ✓ Can access Bedrock models"
+          else
+            echo "   ⚠ Cannot access Bedrock (may need to enable in console)"
+          fi
+          
+          echo ""
+          echo "✅ Verification complete!"
+          echo "   - Stack: $STACK_NAME"
+          echo "   - Bucket: $FULL_BUCKET_NAME"
+          echo "   - Embeddings: $EMBEDDING_COUNT files"
+          echo "   - Blocks: $BLOCK_COUNT definitions"
+      
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2

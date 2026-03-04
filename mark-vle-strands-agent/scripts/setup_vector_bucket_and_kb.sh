@@ -134,9 +134,10 @@ deploy_stack() {
     print_header "Step 1: Deploying S3 Vector Bucket"
     
     if stack_exists; then
-        print_warning "Stack already exists. Updating..."
+        print_warning "Stack already exists. Checking for updates..."
         
-        aws cloudformation update-stack \
+        # Try to update the stack
+        UPDATE_OUTPUT=$(aws cloudformation update-stack \
             --stack-name "$STACK_NAME" \
             --template-body "file://$CF_TEMPLATE" \
             --parameters \
@@ -144,18 +145,18 @@ deploy_stack() {
                 ParameterKey=Environment,ParameterValue="$ENVIRONMENT" \
             --region "$REGION" \
             $(aws_profile_arg) \
-            --capabilities CAPABILITY_IAM
+            --capabilities CAPABILITY_IAM 2>&1)
         
-        if [ $? -eq 0 ]; then
+        UPDATE_EXIT_CODE=$?
+        
+        if [ $UPDATE_EXIT_CODE -eq 0 ]; then
+            print_message "$YELLOW" "Update initiated..."
             wait_for_stack "update"
+        elif echo "$UPDATE_OUTPUT" | grep -q "No updates are to be performed"; then
+            print_success "Stack is already up to date"
         else
-            # Check if no updates are needed
-            if aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" $(aws_profile_arg) &> /dev/null; then
-                print_warning "No updates needed for the stack"
-            else
-                print_error "Failed to update stack"
-                exit 1
-            fi
+            print_error "Failed to update stack: $UPDATE_OUTPUT"
+            exit 1
         fi
     else
         print_message "$YELLOW" "Creating new stack..."

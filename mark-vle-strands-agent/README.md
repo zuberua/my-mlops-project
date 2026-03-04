@@ -2,7 +2,7 @@
 
 AI agent for Mark Vle control system using Amazon Bedrock with S3-based vector RAG.
 
-<!-- Pipeline trigger: Handle 'no updates' CloudFormation error gracefully -->
+<!-- Pipeline trigger: Use cloudformation deploy for simpler stack management -->
 
 ## Features
 

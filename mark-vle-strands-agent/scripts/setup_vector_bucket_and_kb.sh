@@ -100,83 +100,29 @@ get_input() {
     eval $var_name="${input:-$default}"
 }
 
-# Function to check if CloudFormation stack exists
-stack_exists() {
-    aws cloudformation describe-stacks \
-        --stack-name "$STACK_NAME" \
-        --region "$REGION" \
-        $(aws_profile_arg) \
-        &> /dev/null
-    return $?
-}
-
-# Function to wait for stack operation to complete
-wait_for_stack() {
-    local operation=$1
-    print_message "$YELLOW" "Waiting for stack $operation to complete..."
-    
-    aws cloudformation wait "stack-${operation}-complete" \
-        --stack-name "$STACK_NAME" \
-        --region "$REGION" \
-        $(aws_profile_arg)
-    
-    if [ $? -eq 0 ]; then
-        print_success "Stack $operation completed successfully"
-        return 0
-    else
-        print_error "Stack $operation failed"
-        return 1
-    fi
-}
-
 # Function to create or update CloudFormation stack
 deploy_stack() {
     print_header "Step 1: Deploying S3 Vector Bucket"
     
-    if stack_exists; then
-        print_warning "Stack already exists. Checking for updates..."
-        
-        # Try to update the stack
-        UPDATE_OUTPUT=$(aws cloudformation update-stack \
-            --stack-name "$STACK_NAME" \
-            --template-body "file://$CF_TEMPLATE" \
-            --parameters \
-                ParameterKey=VectorBucketName,ParameterValue="$BUCKET_NAME" \
-                ParameterKey=Environment,ParameterValue="$ENVIRONMENT" \
-            --region "$REGION" \
-            $(aws_profile_arg) \
-            --capabilities CAPABILITY_IAM 2>&1)
-        
-        UPDATE_EXIT_CODE=$?
-        
-        if [ $UPDATE_EXIT_CODE -eq 0 ]; then
-            print_message "$YELLOW" "Update initiated..."
-            wait_for_stack "update"
-        elif echo "$UPDATE_OUTPUT" | grep -q "No updates are to be performed"; then
-            print_success "Stack is already up to date"
-        else
-            print_error "Failed to update stack: $UPDATE_OUTPUT"
-            exit 1
-        fi
+    print_message "$YELLOW" "Deploying CloudFormation stack..."
+    
+    # Use cloudformation deploy - handles create/update automatically
+    aws cloudformation deploy \
+        --stack-name "$STACK_NAME" \
+        --template-file "$CF_TEMPLATE" \
+        --parameter-overrides \
+            VectorBucketName="$BUCKET_NAME" \
+            Environment="$ENVIRONMENT" \
+        --region "$REGION" \
+        $(aws_profile_arg) \
+        --capabilities CAPABILITY_IAM \
+        --no-fail-on-empty-changeset
+    
+    if [ $? -eq 0 ]; then
+        print_success "Stack deployment completed successfully"
     else
-        print_message "$YELLOW" "Creating new stack..."
-        
-        aws cloudformation create-stack \
-            --stack-name "$STACK_NAME" \
-            --template-body "file://$CF_TEMPLATE" \
-            --parameters \
-                ParameterKey=VectorBucketName,ParameterValue="$BUCKET_NAME" \
-                ParameterKey=Environment,ParameterValue="$ENVIRONMENT" \
-            --region "$REGION" \
-            $(aws_profile_arg) \
-            --capabilities CAPABILITY_IAM
-        
-        if [ $? -eq 0 ]; then
-            wait_for_stack "create"
-        else
-            print_error "Failed to create stack"
-            exit 1
-        fi
+        print_error "Stack deployment failed"
+        exit 1
     fi
 }
 

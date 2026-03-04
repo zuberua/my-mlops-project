@@ -300,7 +300,10 @@ process_knowledge_base() {
     fi
     
     # Set environment variables for the script
-    export AWS_PROFILE="$AWS_PROFILE"
+    # Only export AWS_PROFILE if it's set (not empty)
+    if [ -n "$AWS_PROFILE" ]; then
+        export AWS_PROFILE="$AWS_PROFILE"
+    fi
     export AWS_REGION="$REGION"
     export S3_BUCKET_NAME="$FULL_BUCKET_NAME"
     

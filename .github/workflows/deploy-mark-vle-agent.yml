@@ -49,63 +49,19 @@ jobs:
       
       - name: Setup S3 Vector Bucket and Knowledge Base
         working-directory: ./mark-vle-strands-agent
-        env:
-          AWS_PROFILE: ""  # Use GitHub Actions credentials
         run: |
           echo "Setting up S3 Vector Bucket and Knowledge Base..."
+          
+          # Copy CI deployment config
+          cp .deploy.ci.env .deploy.env
           
           # Make script executable
           chmod +x scripts/setup_vector_bucket_and_kb.sh
           
-          # Run setup with non-interactive mode
-          export AWS_REGION=${{ env.AWS_REGION }}
-          export BUCKET_NAME=${{ env.S3_BUCKET_PREFIX }}
-          export ENVIRONMENT=production
-          export STACK_NAME=mark-vle-vector-bucket
+          # Run setup script (will read from .deploy.env)
+          ./scripts/setup_vector_bucket_and_kb.sh
           
-          # Check if stack exists
-          if aws cloudformation describe-stacks --stack-name $STACK_NAME --region $AWS_REGION 2>/dev/null; then
-            echo "✓ CloudFormation stack already exists"
-          else
-            echo "Creating CloudFormation stack..."
-            aws cloudformation create-stack \
-              --stack-name $STACK_NAME \
-              --template-body file://cloudformation/vector-bucket.yaml \
-              --parameters \
-                ParameterKey=VectorBucketName,ParameterValue=$BUCKET_NAME \
-                ParameterKey=Environment,ParameterValue=$ENVIRONMENT \
-              --region $AWS_REGION
-            
-            echo "Waiting for stack creation..."
-            aws cloudformation wait stack-create-complete \
-              --stack-name $STACK_NAME \
-              --region $AWS_REGION
-            
-            echo "✓ Stack created successfully"
-          fi
-          
-          # Get bucket name from stack
-          FULL_BUCKET_NAME=$(aws cloudformation describe-stacks \
-            --stack-name $STACK_NAME \
-            --region $AWS_REGION \
-            --query 'Stacks[0].Outputs[?OutputKey==`VectorBucketName`].OutputValue' \
-            --output text)
-          
-          echo "Bucket Name: $FULL_BUCKET_NAME"
-          
-          # Check if embeddings already exist
-          EMBEDDING_COUNT=$(aws s3 ls s3://$FULL_BUCKET_NAME/embeddings/blocks/ 2>/dev/null | wc -l || echo "0")
-          
-          if [ "$EMBEDDING_COUNT" -gt 200 ]; then
-            echo "✓ Embeddings already exist ($EMBEDDING_COUNT files)"
-          else
-            echo "Generating and uploading embeddings..."
-            export S3_BUCKET_NAME=$FULL_BUCKET_NAME
-            python3 scripts/process_block_library.py
-            echo "✓ Embeddings uploaded successfully"
-          fi
-          
-          echo "✓ S3 Vector Bucket and Knowledge Base setup complete"
+          echo "✓ Setup complete"
       
       - name: Verify Setup
         working-directory: ./mark-vle-strands-agent

@@ -41,7 +41,7 @@ cd my-mlops-project/mark-vle-strands-agent
 
 The bucket name flows automatically: **CloudFormation → config.py → .env → agent runtime**
 
-### Verify the Setup
+### Verify Setup
 
 After setup, verify everything is working:
 

@@ -2,7 +2,7 @@
 
 AI agent for Mark Vle control system using Amazon Bedrock with S3-based vector RAG.
 
-<!-- Pipeline trigger: Refactored workflow to use .deploy.ci.env -->
+<!-- Pipeline trigger: Use existing CDK ECR repository -->
 
 ## Features
 

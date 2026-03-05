@@ -51,18 +51,18 @@ jobs:
         run: |
           echo "Setting up S3 Vector Bucket and Knowledge Base..."
           
-          # Unset AWS_PROFILE to use IAM role from GitHub Actions
-          unset AWS_PROFILE
-          
           # Create .deploy.env from example with CI/CD overrides
           cp .deploy.env.example .deploy.env
           
-          # Override for CI/CD environment
+          # Override for CI/CD environment (comment out AWS_PROFILE instead of setting it empty)
+          sed -i.bak 's/^AWS_PROFILE=/#AWS_PROFILE=/' .deploy.env
           echo "" >> .deploy.env
           echo "# CI/CD Overrides" >> .deploy.env
-          echo "AWS_PROFILE=" >> .deploy.env
           echo "NON_INTERACTIVE=true" >> .deploy.env
           echo "CI=true" >> .deploy.env
+          
+          # Unset AWS_PROFILE to use IAM role from GitHub Actions
+          unset AWS_PROFILE
           
           # Make script executable
           chmod +x scripts/setup_vector_bucket_and_kb.sh

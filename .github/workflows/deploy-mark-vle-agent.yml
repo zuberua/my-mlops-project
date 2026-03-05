@@ -180,6 +180,7 @@ jobs:
           docker buildx build \
             --platform linux/arm64 \
             --tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            --tag $ECR_REGISTRY/$ECR_REPOSITORY:latest \
             --push \
             .
           

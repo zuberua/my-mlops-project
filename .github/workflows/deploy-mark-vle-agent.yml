@@ -9,10 +9,9 @@ on:
   workflow_dispatch:  # Allow manual trigger
 
 env:
+  # AWS Region - used for AWS credentials configuration early in workflow
+  # Other config values are loaded from .deploy.ci.env in deployment steps
   AWS_REGION: us-west-2
-  ECR_REPOSITORY: bedrock-agentcore-mcp_server
-  IMAGE_TAG: latest
-  S3_BUCKET_PREFIX: markvie-vectors
 
 jobs:
   build-and-push:
@@ -71,18 +70,20 @@ jobs:
         run: |
           echo "Verifying setup..."
           
-          # Get stack name and bucket
-          STACK_NAME=mark-vle-vector-bucket
+          # Load configuration from .deploy.env
+          source .deploy.env
+          
+          # Get full bucket name from CloudFormation
           FULL_BUCKET_NAME=$(aws cloudformation describe-stacks \
             --stack-name $STACK_NAME \
-            --region ${{ env.AWS_REGION }} \
+            --region $AWS_REGION \
             --query 'Stacks[0].Outputs[?OutputKey==`VectorBucketName`].OutputValue' \
             --output text)
           
           echo "1. Checking CloudFormation stack..."
           STACK_STATUS=$(aws cloudformation describe-stacks \
             --stack-name $STACK_NAME \
-            --region ${{ env.AWS_REGION }} \
+            --region $AWS_REGION \
             --query 'Stacks[0].StackStatus' \
             --output text)
           
@@ -121,7 +122,7 @@ jobs:
           fi
           
           echo "5. Checking Bedrock access..."
-          if aws bedrock list-foundation-models --region ${{ env.AWS_REGION }} --query 'modelSummaries[?contains(modelId, `claude`)].modelId' --output text > /dev/null 2>&1; then
+          if aws bedrock list-foundation-models --region $AWS_REGION --query 'modelSummaries[?contains(modelId, `claude`)].modelId' --output text > /dev/null 2>&1; then
             echo "   ✓ Can access Bedrock models"
           else
             echo "   ⚠ Cannot access Bedrock (may need to enable in console)"
@@ -147,6 +148,9 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
+          # Load configuration
+          source .deploy.env
+          
           echo "Building Docker image for ARM64 (required by AgentCore)..."
           docker buildx build \
             --platform linux/arm64 \
@@ -159,15 +163,19 @@ jobs:
           echo "Image URI: $ECR_REGISTRY/$ECR_REPOSITORY:latest"
           echo "Architecture: ARM64"
           echo ""
-          echo "Note: Ensure IAM execution role has access to S3 vector bucket:"
-          echo "  - Bucket: ${S3_BUCKET_PREFIX}-<account-id>"
-          echo "  - Region: ${{ env.AWS_REGION }}"
+          echo "Note: Ensure IAM execution role has access to S3 vector bucket"
+          echo "  - Check .deploy.ci.env for bucket configuration"
+          echo "  - Region: $AWS_REGION"
       
       - name: Output image URI
         id: output
+        working-directory: ./mark-vle-strands-agent
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
+          # Load configuration
+          source .deploy.env
+          
           echo "::notice title=Deployment Complete::Image URI: $ECR_REGISTRY/$ECR_REPOSITORY:latest"
           echo "IMAGE_URI=$ECR_REGISTRY/$ECR_REPOSITORY:latest" >> $GITHUB_OUTPUT
   
@@ -221,7 +229,11 @@ jobs:
       
       - name: Deployment Summary
         if: success()
+        working-directory: ./mark-vle-strands-agent
         run: |
+          # Load configuration
+          source .deploy.env
+          
           echo "## ✅ AgentCore Deployment Complete" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
@@ -233,18 +245,19 @@ jobs:
           echo "### Agent Details:" >> $GITHUB_STEP_SUMMARY
           echo "- **Name:** mark_vle_agent" >> $GITHUB_STEP_SUMMARY
           echo "- **Runtime:** agent-675ATtDQE1" >> $GITHUB_STEP_SUMMARY
-          echo "- **Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region:** $AWS_REGION" >> $GITHUB_STEP_SUMMARY
           echo "- **Architecture:** Local RAG with S3 Vector Storage" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Prerequisites Verified:" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ S3 Vector Bucket: \`${S3_BUCKET_PREFIX}-<account-id>\`" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ S3 Vector Bucket: \`$BUCKET_NAME-<account-id>\`" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ CloudFormation Stack: \`$STACK_NAME\`" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ 206 Block Embeddings Loaded" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ IAM Role Access to S3 Bucket" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Test the Agent:" >> $GITHUB_STEP_SUMMARY
           echo '```python' >> $GITHUB_STEP_SUMMARY
           echo "import boto3" >> $GITHUB_STEP_SUMMARY
-          echo "client = boto3.client('bedrock-agentcore-runtime', region_name='${{ env.AWS_REGION }}')" >> $GITHUB_STEP_SUMMARY
+          echo "client = boto3.client('bedrock-agentcore-runtime', region_name='$AWS_REGION')" >> $GITHUB_STEP_SUMMARY
           echo "response = client.invoke_agent(" >> $GITHUB_STEP_SUMMARY
           echo "    agentName='mark_vle_agent'," >> $GITHUB_STEP_SUMMARY
           echo "    inputText='What are the inputs of the TIMER block?'" >> $GITHUB_STEP_SUMMARY

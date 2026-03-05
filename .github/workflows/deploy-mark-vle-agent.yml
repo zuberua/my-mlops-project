@@ -180,12 +180,11 @@ jobs:
           docker buildx build \
             --platform linux/arm64 \
             --tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
-            --tag $ECR_REGISTRY/$ECR_REPOSITORY:latest \
             --push \
             .
           
           echo "✓ Image pushed successfully!"
-          echo "Image URI: $ECR_REGISTRY/$ECR_REPOSITORY:latest"
+          echo "Image URI: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
           echo "Architecture: ARM64"
           echo ""
           echo "Note: Ensure IAM execution role has access to S3 vector bucket"
@@ -196,6 +195,7 @@ jobs:
         working-directory: ./mark-vle-strands-agent
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
         run: |
           # Verify .deploy.env exists
           if [ ! -f .deploy.env ]; then
@@ -213,8 +213,8 @@ jobs:
           source .deploy.env
           set +a
           
-          echo "::notice title=Deployment Complete::Image URI: $ECR_REGISTRY/$ECR_REPOSITORY:latest"
-          echo "IMAGE_URI=$ECR_REGISTRY/$ECR_REPOSITORY:latest" >> $GITHUB_OUTPUT
+          echo "::notice title=Deployment Complete::Image URI: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          echo "IMAGE_URI=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
   
   deploy-to-agentcore:
     name: Deploy to AgentCore Runtime

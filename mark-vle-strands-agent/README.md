@@ -25,7 +25,6 @@ The easiest way to get started - one script does everything:
 cd my-mlops-project/mark-vle-strands-agent
 ./scripts/setup_vector_bucket_and_kb.sh
 ```
-
 **What it does:**
 1. ✓ Creates S3 Vector Bucket via CloudFormation
 2. ✓ Automatically retrieves bucket name from stack outputs

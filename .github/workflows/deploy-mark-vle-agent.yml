@@ -157,6 +157,17 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
+          # Verify .deploy.env exists
+          if [ ! -f .deploy.env ]; then
+            echo "Error: .deploy.env not found. Creating from example..."
+            cp .deploy.env.example .deploy.env
+            sed -i.bak 's/^AWS_PROFILE=/#AWS_PROFILE=/' .deploy.env
+            echo "" >> .deploy.env
+            echo "# CI/CD Overrides" >> .deploy.env
+            echo "NON_INTERACTIVE=true" >> .deploy.env
+            echo "CI=true" >> .deploy.env
+          fi
+          
           # Load configuration and export variables
           set -a
           source .deploy.env
@@ -178,7 +189,6 @@ jobs:
           echo "Architecture: ARM64"
           echo ""
           echo "Note: Ensure IAM execution role has access to S3 vector bucket"
-          echo "  - Check .deploy.ci.env for bucket configuration"
           echo "  - Region: $AWS_REGION"
       
       - name: Output image URI
@@ -187,6 +197,17 @@ jobs:
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
+          # Verify .deploy.env exists
+          if [ ! -f .deploy.env ]; then
+            echo "Error: .deploy.env not found. Creating from example..."
+            cp .deploy.env.example .deploy.env
+            sed -i.bak 's/^AWS_PROFILE=/#AWS_PROFILE=/' .deploy.env
+            echo "" >> .deploy.env
+            echo "# CI/CD Overrides" >> .deploy.env
+            echo "NON_INTERACTIVE=true" >> .deploy.env
+            echo "CI=true" >> .deploy.env
+          fi
+          
           # Load configuration and export variables
           set -a
           source .deploy.env
@@ -247,11 +268,6 @@ jobs:
         if: success()
         working-directory: ./mark-vle-strands-agent
         run: |
-          # Load configuration and export variables
-          set -a
-          source .deploy.env
-          set +a
-          
           echo "## ✅ AgentCore Deployment Complete" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
@@ -263,19 +279,19 @@ jobs:
           echo "### Agent Details:" >> $GITHUB_STEP_SUMMARY
           echo "- **Name:** mark_vle_agent" >> $GITHUB_STEP_SUMMARY
           echo "- **Runtime:** agent-675ATtDQE1" >> $GITHUB_STEP_SUMMARY
-          echo "- **Region:** $AWS_REGION" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Architecture:** Local RAG with S3 Vector Storage" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Prerequisites Verified:" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ S3 Vector Bucket: \`$BUCKET_NAME-<account-id>\`" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ CloudFormation Stack: \`$STACK_NAME\`" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ S3 Vector Bucket: \`markvie-vectors-<account-id>\`" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ CloudFormation Stack: \`mark-vle-vector-bucket\`" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ 206 Block Embeddings Loaded" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ IAM Role Access to S3 Bucket" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Test the Agent:" >> $GITHUB_STEP_SUMMARY
           echo '```python' >> $GITHUB_STEP_SUMMARY
           echo "import boto3" >> $GITHUB_STEP_SUMMARY
-          echo "client = boto3.client('bedrock-agentcore-runtime', region_name='$AWS_REGION')" >> $GITHUB_STEP_SUMMARY
+          echo "client = boto3.client('bedrock-agentcore-runtime', region_name='${{ env.AWS_REGION }}')" >> $GITHUB_STEP_SUMMARY
           echo "response = client.invoke_agent(" >> $GITHUB_STEP_SUMMARY
           echo "    agentName='mark_vle_agent'," >> $GITHUB_STEP_SUMMARY
           echo "    inputText='What are the inputs of the TIMER block?'" >> $GITHUB_STEP_SUMMARY

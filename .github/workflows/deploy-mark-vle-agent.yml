@@ -54,8 +54,15 @@ jobs:
           # Unset AWS_PROFILE to use IAM role from GitHub Actions
           unset AWS_PROFILE
           
-          # Copy CI deployment config
-          cp .deploy.ci.env .deploy.env
+          # Create .deploy.env from example with CI/CD overrides
+          cp .deploy.env.example .deploy.env
+          
+          # Override for CI/CD environment
+          echo "" >> .deploy.env
+          echo "# CI/CD Overrides" >> .deploy.env
+          echo "AWS_PROFILE=" >> .deploy.env
+          echo "NON_INTERACTIVE=true" >> .deploy.env
+          echo "CI=true" >> .deploy.env
           
           # Make script executable
           chmod +x scripts/setup_vector_bucket_and_kb.sh

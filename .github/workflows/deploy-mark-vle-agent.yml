@@ -10,7 +10,7 @@ on:
 
 env:
   # AWS Region - used for AWS credentials configuration early in workflow
-  # Other config values are loaded from .deploy.ci.env in deployment steps
+  # Other config values are loaded from .deploy.env.example in deployment steps
   AWS_REGION: us-west-2
 
 jobs:

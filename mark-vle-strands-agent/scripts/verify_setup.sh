@@ -207,16 +207,38 @@ else
     print_error "requirements.txt not found"
 fi
 
-# Check 9: Bedrock Access
-print_check "Bedrock Access"
-if aws bedrock list-foundation-models \
-    --region "$AWS_REGION" \
-    --profile "$AWS_PROFILE" \
-    --query 'modelSummaries[?contains(modelId, `claude`)].modelId' \
-    --output text &> /dev/null; then
-    print_success "Can access Bedrock models"
+# Check 9: LLM Access (Bedrock or LiteLLM Proxy)
+print_check "LLM Access"
+if [ -n "$LITELLM_PROXY_URL" ]; then
+    echo "  LiteLLM proxy configured: $LITELLM_PROXY_URL"
+    echo "  Model: ${LITELLM_MODEL:-not set}"
+    
+    HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "$LITELLM_PROXY_URL/health" 2>/dev/null || echo "000")
+    if [ "$HTTP_STATUS" = "200" ]; then
+        print_success "LiteLLM proxy is reachable"
+    elif [ "$HTTP_STATUS" = "000" ]; then
+        print_warning "LiteLLM proxy not reachable at $LITELLM_PROXY_URL"
+        echo "  Ensure the proxy is running and accessible"
+    else
+        print_warning "LiteLLM proxy returned HTTP $HTTP_STATUS"
+    fi
+    
+    if [ -n "$LITELLM_API_KEY" ]; then
+        print_success "LiteLLM API key is set"
+    else
+        print_warning "LITELLM_API_KEY not set — proxy may reject requests"
+    fi
 else
-    print_warning "Cannot access Bedrock (may need to enable in console)"
+    echo "  Using direct Bedrock access"
+    if aws bedrock list-foundation-models \
+        --region "$AWS_REGION" \
+        --profile "$AWS_PROFILE" \
+        --query 'modelSummaries[?contains(modelId, `claude`)].modelId' \
+        --output text &> /dev/null; then
+        print_success "Can access Bedrock models"
+    else
+        print_warning "Cannot access Bedrock (may need to enable in console)"
+    fi
 fi
 
 # Summary

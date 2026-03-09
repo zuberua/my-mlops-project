@@ -1,0 +1,144 @@
+name: Deploy DynamoDB Block Pin Pipeline
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'dynamodb-block-schema/**'
+      # Note: paths are relative to repo root (my-mlops-project/)
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-west-2
+  STACK_NAME: markvle-block-pins
+  ENVIRONMENT: production
+
+jobs:
+  deploy:
+    name: Deploy CloudFormation + Lambda
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-DynamoDBBlockPins
+
+      - name: Deploy CloudFormation stack
+        working-directory: ./dynamodb-block-schema
+        run: |
+          echo "Deploying CloudFormation stack: $STACK_NAME"
+          
+          aws cloudformation deploy \
+            --stack-name "$STACK_NAME" \
+            --template-file cloudformation/table.yaml \
+            --parameter-overrides \
+              Environment="$ENVIRONMENT" \
+            --region "$AWS_REGION" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+          
+          echo "✓ Stack deployed"
+
+      - name: Package and update Lambda code
+        working-directory: ./dynamodb-block-schema
+        run: |
+          FUNCTION_NAME=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --region "$AWS_REGION" \
+            --query 'Stacks[0].Outputs[?OutputKey==`LambdaFunctionName`].OutputValue' \
+            --output text)
+          
+          echo "Updating Lambda: $FUNCTION_NAME"
+          
+          cd lambda/csv_processor
+          zip -r /tmp/csv_processor.zip handler.py
+          cd ../..
+          
+          aws lambda update-function-code \
+            --function-name "$FUNCTION_NAME" \
+            --zip-file "fileb:///tmp/csv_processor.zip" \
+            --region "$AWS_REGION" \
+            --output text --query 'FunctionName'
+          
+          echo "✓ Lambda code updated"
+
+      - name: Verify deployment
+        working-directory: ./dynamodb-block-schema
+        run: |
+          echo "Verifying deployment..."
+          
+          STACK_STATUS=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --region "$AWS_REGION" \
+            --query 'Stacks[0].StackStatus' \
+            --output text)
+          
+          TABLE_NAME=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --region "$AWS_REGION" \
+            --query 'Stacks[0].Outputs[?OutputKey==`TableName`].OutputValue' \
+            --output text)
+          
+          BUCKET_NAME=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --region "$AWS_REGION" \
+            --query 'Stacks[0].Outputs[?OutputKey==`BucketName`].OutputValue' \
+            --output text)
+          
+          FUNCTION_NAME=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --region "$AWS_REGION" \
+            --query 'Stacks[0].Outputs[?OutputKey==`LambdaFunctionName`].OutputValue' \
+            --output text)
+          
+          echo "Stack Status: $STACK_STATUS"
+          echo "DynamoDB Table: $TABLE_NAME"
+          echo "S3 Bucket: $BUCKET_NAME"
+          echo "Lambda Function: $FUNCTION_NAME"
+          
+          if [ "$STACK_STATUS" = "CREATE_COMPLETE" ] || [ "$STACK_STATUS" = "UPDATE_COMPLETE" ]; then
+            echo "✓ Deployment verified"
+          else
+            echo "✗ Unexpected stack status: $STACK_STATUS"
+            exit 1
+          fi
+
+      - name: Deployment Summary
+        if: success()
+        run: |
+          TABLE_NAME=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --region "$AWS_REGION" \
+            --query 'Stacks[0].Outputs[?OutputKey==`TableName`].OutputValue' \
+            --output text)
+          
+          BUCKET_NAME=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --region "$AWS_REGION" \
+            --query 'Stacks[0].Outputs[?OutputKey==`BucketName`].OutputValue' \
+            --output text)
+          
+          echo "## ✅ DynamoDB Block Pin Pipeline Deployed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Stack | $STACK_NAME |" >> $GITHUB_STEP_SUMMARY
+          echo "| DynamoDB Table | $TABLE_NAME |" >> $GITHUB_STEP_SUMMARY
+          echo "| S3 Bucket | $BUCKET_NAME |" >> $GITHUB_STEP_SUMMARY
+          echo "| Region | $AWS_REGION |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Upload CSV to trigger ingestion:" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "aws s3 cp data/sample_pins.csv s3://$BUCKET_NAME/uploads/sample_pins.csv" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,102 @@
+name: Deploy Mark VIe KB Pipeline
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'my-mlops-project/dynamodb-block-schema/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: false
+        default: 'poc'
+        type: choice
+        options:
+          - poc
+          - dev
+          - staging
+      app_prefix:
+        description: 'Application prefix'
+        required: false
+        default: 'markvie-kb'
+
+jobs:
+  deploy:
+    name: Deploy KB Ingestion Pipeline
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AWS_REGION: us-west-2
+      APP_PREFIX: ${{ github.event.inputs.app_prefix || 'markvie-kb' }}
+      ENVIRONMENT: ${{ github.event.inputs.environment || 'poc' }}
+    defaults:
+      run:
+        working-directory: my-mlops-project/dynamodb-block-schema
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-MarkVleAgent
+
+      - name: Validate CloudFormation template
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://cloudformation/table.yaml
+
+      - name: Deploy CloudFormation stack
+        run: |
+          STACK_NAME="${APP_PREFIX}-resources-${ENVIRONMENT}"
+          echo "Deploying stack: $STACK_NAME"
+          aws cloudformation deploy \
+            --stack-name "$STACK_NAME" \
+            --template-file cloudformation/table.yaml \
+            --parameter-overrides \
+              AppPrefix="${APP_PREFIX}" \
+              Environment="${ENVIRONMENT}" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
+      - name: Package and deploy Lambda code
+        run: |
+          STACK_NAME="${APP_PREFIX}-resources-${ENVIRONMENT}"
+          FUNCTION_NAME=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --query 'Stacks[0].Outputs[?OutputKey==`LambdaFunctionName`].OutputValue' \
+            --output text)
+          echo "Deploying Lambda: $FUNCTION_NAME"
+          cd lambda/csv_processor
+          zip -r /tmp/csv_processor.zip handler.py
+          aws lambda update-function-code \
+            --function-name "$FUNCTION_NAME" \
+            --zip-file fileb:///tmp/csv_processor.zip \
+            --output text --query 'FunctionName'
+
+      - name: Deployment summary
+        run: |
+          STACK_NAME="${APP_PREFIX}-resources-${ENVIRONMENT}"
+          BUCKET=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+            --query 'Stacks[0].Outputs[?OutputKey==`BucketName`].OutputValue' --output text)
+          TABLE=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+            --query 'Stacks[0].Outputs[?OutputKey==`TableName`].OutputValue' --output text)
+          LAMBDA=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+            --query 'Stacks[0].Outputs[?OutputKey==`LambdaFunctionName`].OutputValue' --output text)
+          SFN=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+            --query 'Stacks[0].Outputs[?OutputKey==`StateMachineArn`].OutputValue' --output text)
+          echo "### Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Stack | $STACK_NAME |" >> $GITHUB_STEP_SUMMARY
+          echo "| S3 Bucket | $BUCKET |" >> $GITHUB_STEP_SUMMARY
+          echo "| DynamoDB | $TABLE |" >> $GITHUB_STEP_SUMMARY
+          echo "| Lambda | $LAMBDA |" >> $GITHUB_STEP_SUMMARY
+          echo "| Step Functions | $SFN |" >> $GITHUB_STEP_SUMMARY

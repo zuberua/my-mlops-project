@@ -157,7 +157,6 @@ See [SCHEMA_COMPARISON.md](../docs/SCHEMA_COMPARISON.md) for full schema compari
 
 ## Acceptance Criteria
 
-
 ### US-01 Pin Report Upload 
 
 1. Accepts Pin Report uploads through the defined ingestion path — CSV files uploaded to s3://markvie-kb-138720056246/knowledgebase/ automatically trigger the EventBridge → Step Functions → Lambda pipeline. Tested end-to-end.

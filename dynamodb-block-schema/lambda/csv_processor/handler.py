@@ -1,9 +1,13 @@
 """
-Lambda handler: S3 CSV upload → DynamoDB block pin ingestion.
+Lambda handler: CSV pin report → DynamoDB block pin ingestion.
 
-Triggered by S3 PutObject events on the uploads/ prefix.
-Downloads the CSV, parses it, and batch-writes pin items
-to the DynamoDB table using the new key design:
+Invoked by Step Functions with payload:
+  {"bucket": "bucket-name", "key": "uploads/file.csv"}
+
+Also supports direct S3 event trigger (legacy) for backward compatibility.
+
+Downloads the CSV, parses it, and batch-writes pin items to DynamoDB
+using the pin-level key design:
 
 PK: SYS#{System}|DEV#{Device}|PG#{ProgramGroup}|PROG#{Program}|TASK#{Task}
 SK: BEX#{BlockExecution}|BLK#{Block}|PIN#{Pin}|USE#{Usage}
@@ -12,7 +16,6 @@ SK: BEX#{BlockExecution}|BLK#{Block}|PIN#{Pin}|USE#{Usage}
 import csv
 import io
 import os
-import re
 import urllib.parse
 
 import boto3
@@ -25,16 +28,11 @@ table = dynamodb.Table(TABLE_NAME) if TABLE_NAME else None
 
 
 def parse_locator(locator):
-    """Extract System, Device, ProgramGroup from Locator string.
-
-    Locator format:
-    System:TVA CUMBERLAND|Device:G1|ProgramGroup:Custom|Program:Custom|Block:...|PinVariable:...
-    """
+    """Extract System, Device, ProgramGroup from Locator string."""
     parts = {}
     for segment in locator.split('|'):
         if ':' in segment:
             key, value = segment.split(':', 1)
-            # Only take the first occurrence of each key
             if key not in parts:
                 parts[key] = value
     return parts
@@ -47,7 +45,6 @@ def build_pk(row, locator_parts):
     prog_group = locator_parts.get('ProgramGroup', 'UNKNOWN')
     program = row.get('Program', '').strip() or locator_parts.get('Program', 'UNKNOWN')
     task = row.get('Task', '').strip() or 'UNKNOWN'
-
     return f'SYS#{system}|DEV#{device}|PG#{prog_group}|PROG#{program}|TASK#{task}'
 
 
@@ -57,11 +54,10 @@ def build_sk(row):
     block = row['Block'].strip()
     pin = row['Pin'].strip()
     usage = row['Usage'].strip()
-
     return f'BEX#{block_exec:04d}|BLK#{block}|PIN#{pin}|USE#{usage}'
 
 
-def build_item(row):
+def build_item(row, source_file='', upload_id=''):
     """Build a DynamoDB item from a CSV row."""
     locator = row.get('Locator', '').strip()
     locator_parts = parse_locator(locator)
@@ -75,18 +71,13 @@ def build_item(row):
     usage = row['Usage'].strip()
     system = locator_parts.get('System', 'UNKNOWN')
     device = locator_parts.get('Device', 'UNKNOWN')
+    connection = row.get('Connection', '').strip()
 
     return {
-        # Primary key
         'PK': pk,
         'SK': sk,
-        # GSI1 — BlockTypeIndex (cross-project queries by type)
-        'GSI1PK': f'TYPE#{block_type}',
-        'GSI1SK': f'USE#{usage}|SYS#{system}|DEV#{device}|BLK#{block}|PIN#{pin}',
-        # GSI2 — LocatorIndex (globally unique lookup)
-        'GSI2PK': f'LOC#{locator}',
-        'GSI2SK': '-',
-        # Attributes
+        'GSI3PK': f'CONN#{connection}' if connection else 'CONN#NONE',
+        'GSI3SK': f'USE#{usage}|BLK#{block}|PIN#{pin}',
         'Pin': pin,
         'PinDescription': row.get('PinDescription', '').strip(),
         'Block': block,
@@ -95,7 +86,7 @@ def build_item(row):
         'Program': row.get('Program', '').strip(),
         'BlockExecution': int(row['BlockExecution'].strip()),
         'BlockType': block_type,
-        'Connection': row.get('Connection', '').strip(),
+        'Connection': connection,
         'DataType': row.get('DataType', '').strip(),
         'EntryNo': int(row['EntryNo'].strip()),
         'IsCritical': row.get('IsCritical', 'FALSE').strip().upper() == 'TRUE',
@@ -105,6 +96,8 @@ def build_item(row):
         'System': system,
         'Device': device,
         'ProgramGroup': locator_parts.get('ProgramGroup', ''),
+        'SourceFile': source_file,
+        'UploadId': upload_id,
     }
 
 
@@ -115,48 +108,79 @@ def parse_csv(body_bytes):
     return list(reader)
 
 
-def handler(event, context):
-    """Lambda entry point — triggered by S3 event."""
-    results = []
+def _extract_bucket_key(event):
+    """Extract bucket and key from Step Functions payload or S3 event.
 
-    for record in event['Records']:
+    Step Functions payload format:
+      {"bucket": "bucket-name", "key": "uploads/file.csv"}
+
+    S3 event format (legacy):
+      {"Records": [{"s3": {"bucket": {"name": "..."}, "object": {"key": "..."}}}]}
+    """
+    # Step Functions payload (primary)
+    if 'bucket' in event and 'key' in event:
+        return event['bucket'], event['key']
+
+    # S3 event record (legacy/backward compat)
+    if 'Records' in event:
+        record = event['Records'][0]
         bucket = record['s3']['bucket']['name']
         key = urllib.parse.unquote_plus(record['s3']['object']['key'])
+        return bucket, key
 
-        print(f'Processing s3://{bucket}/{key}')
+    raise ValueError(f'Unrecognized event format: {list(event.keys())}')
 
-        # Download CSV from S3
-        response = s3.get_object(Bucket=bucket, Key=key)
-        rows = parse_csv(response['Body'].read())
-        print(f'Parsed {len(rows)} rows')
 
-        # Build and write items
-        items = [build_item(row) for row in rows]
-        print(f'Writing {len(items)} items to {TABLE_NAME}')
+def process_file(bucket, key, upload_id=''):
+    """Download CSV from S3, parse, and write items to DynamoDB.
 
-        written = 0
-        with table.batch_writer() as batch:
-            for item in items:
-                batch.put_item(Item=item)
-                written += 1
+    Returns processing result including project/task context extracted
+    from the CSV data (unique systems and tasks found in the file).
+    """
+    print(f'Processing s3://{bucket}/{key}')
 
-        # Move processed file to processed/ prefix
-        processed_key = key.replace('uploads/', 'processed/', 1)
-        s3.copy_object(
-            Bucket=bucket,
-            CopySource={'Bucket': bucket, 'Key': key},
-            Key=processed_key,
-        )
-        s3.delete_object(Bucket=bucket, Key=key)
-        print(f'Moved {key} → {processed_key}')
+    response = s3.get_object(Bucket=bucket, Key=key)
+    rows = parse_csv(response['Body'].read())
+    print(f'Parsed {len(rows)} rows')
 
-        results.append({
-            'file': key,
-            'rows_parsed': len(rows),
-            'items_written': written,
-        })
+    source_file = key.split('/')[-1]
+    items = [build_item(row, source_file=source_file, upload_id=upload_id) for row in rows]
+    print(f'Writing {len(items)} items to {TABLE_NAME}')
+
+    written = 0
+    with table.batch_writer() as batch:
+        for item in items:
+            batch.put_item(Item=item)
+            written += 1
+
+    # Extract project and task context from processed items
+    systems = sorted(set(item.get('System', 'UNKNOWN') for item in items))
+    tasks = sorted(set(item.get('Task', 'UNKNOWN') for item in items))
+    project_context = ' | '.join(systems)
+    task_context = ' | '.join(tasks)
+    print(f'Project context: {project_context}')
+    print(f'Task context: {task_context}')
+
+    # Delete processed file from knowledgebase/ to avoid re-triggering EventBridge
+    s3.delete_object(Bucket=bucket, Key=key)
+    print(f'Deleted {key} after processing')
+
+    return {
+        'file': key,
+        'rows_parsed': len(rows),
+        'items_written': written,
+        'project_context': project_context,
+        'task_context': task_context,
+    }
+
+
+def handler(event, context):
+    """Lambda entry point — invoked by Step Functions or S3 event."""
+    bucket, key = _extract_bucket_key(event)
+    upload_id = event.get('uploadId', '')
+    result = process_file(bucket, key, upload_id=upload_id)
 
     return {
         'statusCode': 200,
-        'body': results,
+        'body': result,
     }

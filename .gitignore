@@ -6,3 +6,6 @@
 *.tfvars
 !*.tfvars.example
 .terraform.lock.hcl
+dynamodb-block-schema/data/load_test_300k.csv
+dynamodb-block-schema.zip
+dynamodb-block-schema/data/gen_load_test.py

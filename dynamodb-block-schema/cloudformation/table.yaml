@@ -1,24 +1,27 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  GT Copilot Pin Ingestion Pipeline
-  S3 (CSV upload) -> EventBridge -> Step Functions -> Lambda -> DynamoDB
+  Mark VIe Pin Ingestion Pipeline
+  S3 -> EventBridge -> Step Functions -> Lambda -> DynamoDB
+  DynamoDB Stream -> Lambda -> SQS -> Lambda -> AgentCore (task summaries)
 
 Parameters:
   AppPrefix:
     Type: String
     Default: markvie-kb
-    Description: Application naming prefix
   Environment:
     Type: String
     Default: poc
     AllowedValues: [poc, dev, staging]
+  AgentRuntimeArn:
+    Type: String
+    Default: 'arn:aws:bedrock-agentcore:us-east-1:138720056246:runtime/markvie_customer_support-0qxtkw8xSN'
+  AgentRegion:
+    Type: String
+    Default: us-east-1
 
 Resources:
 
-  # --- S3 Bucket (EventBridge notifications enabled) ---
-  # Folder structure:
-  #   knowledgebase/   - Pin report CSV uploads trigger ingestion workflow
-  #   active-project/  - Active project files (no auto-processing)
+  # --- S3 Bucket ---
   UploadBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -29,15 +32,15 @@ Resources:
       Tags:
         - Key: Application
           Value: !Ref AppPrefix
-        - Key: Environment
-          Value: !Ref Environment
 
-  # --- DynamoDB Table (Pin Data) ---
+  # --- DynamoDB Table (Pin Data) with Stream ---
   BlockPinsTable:
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: !Sub '${AppPrefix}-${Environment}'
       BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
       AttributeDefinitions:
         - AttributeName: PK
           AttributeType: S
@@ -66,8 +69,6 @@ Resources:
       Tags:
         - Key: Application
           Value: !Ref AppPrefix
-        - Key: Environment
-          Value: !Ref Environment
 
   # --- DynamoDB Table (Upload Tracker) ---
   UploadTrackerTable:
@@ -106,35 +107,77 @@ Resources:
       Tags:
         - Key: Application
           Value: !Ref AppPrefix
-        - Key: Environment
-          Value: !Ref Environment
 
-  # --- Lambda Function (CSV processor) ---
+  # --- DynamoDB Table (Task Summaries) ---
+  TaskSummaryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AppPrefix}-task-summaries-${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      Tags:
+        - Key: Application
+          Value: !Ref AppPrefix
+
+  # --- SQS FIFO Queue (summary buffer) ---
+  SummaryQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AppPrefix}-summary-queue-${Environment}.fifo'
+      FifoQueue: true
+      ContentBasedDeduplication: true
+      VisibilityTimeout: 300
+      MessageRetentionPeriod: 86400
+      DeduplicationScope: messageGroup
+      FifoThroughputLimit: perMessageGroupId
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt SummaryDLQ.Arn
+        maxReceiveCount: 3
+      Tags:
+        - Key: Application
+          Value: !Ref AppPrefix
+
+  SummaryDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${AppPrefix}-summary-dlq-${Environment}.fifo'
+      FifoQueue: true
+      ContentBasedDeduplication: true
+      MessageRetentionPeriod: 1209600
+      Tags:
+        - Key: Application
+          Value: !Ref AppPrefix
+
+  # --- Lambda: CSV Processor ---
   CsvProcessorFunction:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Sub '${AppPrefix}-processor-${Environment}'
       Runtime: python3.12
       Handler: handler.handler
-      Timeout: 300
-      MemorySize: 512
+      Timeout: 900
+      MemorySize: 1024
       Environment:
         Variables:
           TABLE_NAME: !Ref BlockPinsTable
           TRACKER_TABLE_NAME: !Ref UploadTrackerTable
+          TASK_SUMMARY_TABLE_NAME: !Ref TaskSummaryTable
       Role: !GetAtt LambdaExecutionRole.Arn
       Code:
         ZipFile: |
-          # Placeholder - deploy actual code via deploy.sh
           def handler(event, context):
               return {'statusCode': 200}
       Tags:
         - Key: Application
           Value: !Ref AppPrefix
-        - Key: Environment
-          Value: !Ref Environment
 
-  # --- IAM Role for Lambda ---
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -149,30 +192,149 @@ Resources:
       ManagedPolicyArns:
         - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
       Policies:
-        - PolicyName: S3ReadAccess
+        - PolicyName: S3Access
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
-                Action:
-                  - s3:GetObject
-                  - s3:DeleteObject
-                  - s3:PutObject
+                Action: ['s3:GetObject', 's3:DeleteObject', 's3:PutObject', 's3:CopyObject']
                 Resource: !Sub 'arn:aws:s3:::${AppPrefix}-${AWS::AccountId}/*'
-        - PolicyName: DynamoDBWriteAccess
+        - PolicyName: DynamoDBAccess
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
-                Action:
-                  - dynamodb:BatchWriteItem
-                  - dynamodb:PutItem
-                  - dynamodb:UpdateItem
+                Action: ['dynamodb:BatchWriteItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem']
                 Resource:
                   - !GetAtt BlockPinsTable.Arn
                   - !Sub '${BlockPinsTable.Arn}/index/*'
                   - !GetAtt UploadTrackerTable.Arn
                   - !Sub '${UploadTrackerTable.Arn}/index/*'
+                  - !GetAtt TaskSummaryTable.Arn
+
+  # --- Lambda: Stream Producer (DynamoDB Stream -> SQS) ---
+  StreamProducerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AppPrefix}-stream-producer-${Environment}'
+      Runtime: python3.12
+      Handler: handler.handler
+      Timeout: 60
+      MemorySize: 128
+      Environment:
+        Variables:
+          SUMMARY_QUEUE_URL: !Ref SummaryQueue
+      Role: !GetAtt StreamProducerRole.Arn
+      Code:
+        ZipFile: |
+          def handler(event, context):
+              return {'statusCode': 200}
+      Tags:
+        - Key: Application
+          Value: !Ref AppPrefix
+
+  StreamProducerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AppPrefix}-stream-producer-role-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: DynamoDBStream
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ['dynamodb:GetRecords', 'dynamodb:GetShardIterator', 'dynamodb:DescribeStream', 'dynamodb:ListStreams']
+                Resource: !Sub '${BlockPinsTable.Arn}/stream/*'
+        - PolicyName: SQSSend
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ['sqs:SendMessage']
+                Resource: !GetAtt SummaryQueue.Arn
+
+  # Event source: DynamoDB Stream -> Stream Producer Lambda
+  StreamProducerEventSource:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt BlockPinsTable.StreamArn
+      FunctionName: !GetAtt StreamProducerFunction.Arn
+      StartingPosition: LATEST
+      BatchSize: 1000
+      MaximumBatchingWindowInSeconds: 30
+      Enabled: true
+
+  # --- Lambda: Agent Bridge (SQS -> AgentCore) ---
+  AgentBridgeFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AppPrefix}-agent-bridge-${Environment}'
+      Runtime: python3.12
+      Handler: handler.handler
+      Timeout: 300
+      MemorySize: 256
+      ReservedConcurrentExecutions: 10
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref BlockPinsTable
+          TASK_SUMMARY_TABLE_NAME: !Ref TaskSummaryTable
+          AGENT_RUNTIME_ARN: !Ref AgentRuntimeArn
+          AGENT_REGION: !Ref AgentRegion
+      Role: !GetAtt AgentBridgeRole.Arn
+      Code:
+        ZipFile: |
+          def handler(event, context):
+              return {'statusCode': 200}
+      Tags:
+        - Key: Application
+          Value: !Ref AppPrefix
+
+  AgentBridgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AppPrefix}-agent-bridge-role-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: SQSConsume
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ['sqs:ReceiveMessage', 'sqs:DeleteMessage', 'sqs:GetQueueAttributes']
+                Resource: !GetAtt SummaryQueue.Arn
+        - PolicyName: AgentCoreInvoke
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ['bedrock-agentcore:InvokeAgentRuntime']
+                Resource: !Ref AgentRuntimeArn
+
+  # Event source: SQS -> Agent Bridge Lambda
+  AgentBridgeEventSource:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt SummaryQueue.Arn
+      FunctionName: !GetAtt AgentBridgeFunction.Arn
+      BatchSize: 1
+      Enabled: true
 
   # --- Step Functions State Machine ---
   IngestionStateMachine:
@@ -180,128 +342,105 @@ Resources:
     Properties:
       StateMachineName: !Sub '${AppPrefix}-pin-ingestion-${Environment}'
       RoleArn: !GetAtt StepFunctionsExecutionRole.Arn
-      DefinitionString:
-        !Sub
-          - |
-            {
-              "Comment": "Pin report ingestion workflow with upload tracking",
-              "StartAt": "RecordUploadReceived",
-              "States": {
-                "RecordUploadReceived": {
-                  "Type": "Task",
-                  "Resource": "arn:aws:states:::dynamodb:putItem",
-                  "Parameters": {
-                    "TableName": "${TrackerTable}",
-                    "Item": {
-                      "PK": {"S.$": "States.Format('UPLOAD#{}', ${ExecName})"},
-                      "SK": {"S": "META"},
-                      "UploadId": {"S.$": "${ExecName}"},
-                      "UploadStatus": {"S": "RECEIVED"},
-                      "UploadTimestamp": {"S.$": "${ExecStartTime}"},
-                      "S3Bucket": {"S.$": "$.detail.bucket.name"},
-                      "S3Key": {"S.$": "$.detail.object.key"},
-                      "FileSize": {"N.$": "States.Format('{}', $.detail.object.size)"}
-                    }
-                  },
-                  "ResultPath": "$.trackerResult",
-                  "Next": "ProcessPinReport"
-                },
-                "ProcessPinReport": {
-                  "Type": "Task",
-                  "Resource": "arn:aws:states:::lambda:invoke",
-                  "Parameters": {
-                    "FunctionName": "${LambdaArn}",
-                    "Payload": {
-                      "bucket.$": "$.detail.bucket.name",
-                      "key.$": "$.detail.object.key",
-                      "uploadId.$": "${ExecName}"
-                    }
-                  },
-                  "ResultSelector": {
-                    "statusCode.$": "$.Payload.statusCode",
-                    "body.$": "$.Payload.body"
-                  },
-                  "ResultPath": "$.processingResult",
-                  "Next": "RecordCompleted",
-                  "Retry": [
-                    {
-                      "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException"],
-                      "IntervalSeconds": 5,
-                      "MaxAttempts": 2,
-                      "BackoffRate": 2
-                    }
-                  ],
-                  "Catch": [
-                    {
-                      "ErrorEquals": ["States.ALL"],
-                      "Next": "RecordFailed",
-                      "ResultPath": "$.error"
-                    }
-                  ]
-                },
-                "RecordCompleted": {
-                  "Type": "Task",
-                  "Resource": "arn:aws:states:::dynamodb:updateItem",
-                  "Parameters": {
-                    "TableName": "${TrackerTable}",
-                    "Key": {
-                      "PK": {"S.$": "States.Format('UPLOAD#{}', ${ExecName})"},
-                      "SK": {"S": "META"}
-                    },
-                    "UpdateExpression": "SET UploadStatus = :s, CompletedAt = :t, RowsParsed = :rp, ItemsWritten = :iw, ProjectContext = :pc, TaskContext = :tc",
-                    "ExpressionAttributeValues": {
-                      ":s": {"S": "COMPLETED"},
-                      ":t": {"S.$": "${StateEnteredTime}"},
-                      ":rp": {"N.$": "States.Format('{}', $.processingResult.body.rows_parsed)"},
-                      ":iw": {"N.$": "States.Format('{}', $.processingResult.body.items_written)"},
-                      ":pc": {"S.$": "$.processingResult.body.project_context"},
-                      ":tc": {"S.$": "$.processingResult.body.task_context"}
-                    }
-                  },
-                  "ResultPath": "$.updateResult",
-                  "Next": "IngestionComplete"
-                },
-                "RecordFailed": {
-                  "Type": "Task",
-                  "Resource": "arn:aws:states:::dynamodb:updateItem",
-                  "Parameters": {
-                    "TableName": "${TrackerTable}",
-                    "Key": {
-                      "PK": {"S.$": "States.Format('UPLOAD#{}', ${ExecName})"},
-                      "SK": {"S": "META"}
-                    },
-                    "UpdateExpression": "SET UploadStatus = :s, FailedAt = :t, ErrorMessage = :e",
-                    "ExpressionAttributeValues": {
-                      ":s": {"S": "FAILED"},
-                      ":t": {"S.$": "${StateEnteredTime}"},
-                      ":e": {"S.$": "States.JsonToString($.error)"}
-                    }
-                  },
-                  "ResultPath": "$.updateResult",
-                  "Next": "IngestionFailed"
-                },
-                "IngestionComplete": {
-                  "Type": "Succeed"
-                },
-                "IngestionFailed": {
-                  "Type": "Fail",
-                  "Error": "IngestionError",
-                  "Cause": "Pin report processing failed - see upload tracker for details"
+      DefinitionString: !Sub |-
+        {
+          "Comment": "Mark VIe pin ingestion with upload tracking",
+          "StartAt": "RecordUploadReceived",
+          "States": {
+            "RecordUploadReceived": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::dynamodb:putItem",
+              "Parameters": {
+                "TableName": "${UploadTrackerTable}",
+                "Item": {
+                  "PK": {"S.$": "States.Format('UPLOAD#{}', $$.Execution.Name)"},
+                  "SK": {"S": "META"},
+                  "UploadId": {"S.$": "$$.Execution.Name"},
+                  "UploadStatus": {"S": "RECEIVED"},
+                  "UploadTimestamp": {"S.$": "$$.Execution.StartTime"},
+                  "S3Bucket": {"S.$": "$.detail.bucket.name"},
+                  "S3Key": {"S.$": "$.detail.object.key"},
+                  "FileSize": {"N.$": "States.Format('{}', $.detail.object.size)"}
                 }
-              }
-            }
-          - TrackerTable: !Ref UploadTrackerTable
-            LambdaArn: !GetAtt CsvProcessorFunction.Arn
-            ExecName: "$$.Execution.Name"
-            ExecStartTime: "$$.Execution.StartTime"
-            StateEnteredTime: "$$.State.EnteredTime"
+              },
+              "ResultPath": "$.trackerResult",
+              "Next": "ProcessPinReport"
+            },
+            "ProcessPinReport": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${CsvProcessorFunction.Arn}",
+                "Payload": {"bucket.$": "$.detail.bucket.name", "key.$": "$.detail.object.key", "uploadId.$": "$$.Execution.Name"}
+              },
+              "ResultSelector": {"statusCode.$": "$.Payload.statusCode", "body.$": "$.Payload.body"},
+              "ResultPath": "$.processingResult",
+              "Next": "ValidateProcessingResult",
+              "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 5, "MaxAttempts": 2, "BackoffRate": 2}],
+              "Catch": [{"ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "NormalizeProcessingException"}]
+            },
+            "ValidateProcessingResult": {
+              "Type": "Choice",
+              "Choices": [{"Or": [{"Variable": "$.processingResult.body.rows_skipped", "NumericGreaterThan": 0}, {"Variable": "$.processingResult.body.items_written", "NumericLessThanPath": "$.processingResult.body.rows_parsed"}, {"Not": {"Variable": "$.processingResult.statusCode", "NumericEquals": 200}}], "Next": "BuildProcessingError"}],
+              "Default": "RecordCompleted"
+            },
+            "BuildProcessingError": {
+              "Type": "Pass",
+              "Parameters": {"Error": "IngestionDataQualityError", "Cause.$": "States.Format('rows_parsed={}, items_written={}, rows_skipped={}, status_code={}', $.processingResult.body.rows_parsed, $.processingResult.body.items_written, $.processingResult.body.rows_skipped, $.processingResult.statusCode)", "SkippedRecordsKey.$": "$.processingResult.body.flagged_report_key"},
+              "ResultPath": "$.error",
+              "Next": "RecordFailed"
+            },
+            "NormalizeProcessingException": {
+              "Type": "Pass",
+              "Parameters": {"Error": "IngestionProcessingException", "Cause.$": "States.JsonToString($.error)", "SkippedRecordsKey": ""},
+              "ResultPath": "$.error",
+              "Next": "RecordFailed"
+            },
+            "RecordCompleted": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::dynamodb:updateItem",
+              "Parameters": {
+                "TableName": "${UploadTrackerTable}",
+                "Key": {"PK": {"S.$": "States.Format('UPLOAD#{}', $$.Execution.Name)"}, "SK": {"S": "META"}},
+                "UpdateExpression": "SET UploadStatus = :s, CompletedAt = :t, RowsParsed = :rp, ItemsWritten = :iw, ProjectContext = :pc, TaskContext = :tc, SourceS3Key = :ssk, ProcessedS3Key = :psk, SkippedRecordsKey = :srk",
+                "ExpressionAttributeValues": {
+                  ":s": {"S": "COMPLETED"}, ":t": {"S.$": "$$.State.EnteredTime"},
+                  ":rp": {"N.$": "States.Format('{}', $.processingResult.body.rows_parsed)"},
+                  ":iw": {"N.$": "States.Format('{}', $.processingResult.body.items_written)"},
+                  ":pc": {"S.$": "$.processingResult.body.project_context"},
+                  ":tc": {"S.$": "$.processingResult.body.task_context"},
+                  ":ssk": {"S.$": "$.processingResult.body.file"},
+                  ":psk": {"S.$": "$.processingResult.body.processed_key"},
+                  ":srk": {"S.$": "$.processingResult.body.flagged_report_key"}
+                }
+              },
+              "ResultPath": "$.updateResult",
+              "Next": "IngestionComplete"
+            },
+            "RecordFailed": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::dynamodb:updateItem",
+              "Parameters": {
+                "TableName": "${UploadTrackerTable}",
+                "Key": {"PK": {"S.$": "States.Format('UPLOAD#{}', $$.Execution.Name)"}, "SK": {"S": "META"}},
+                "UpdateExpression": "SET UploadStatus = :s, FailedAt = :t, ErrorMessage = :e, SkippedRecordsKey = :srk",
+                "ExpressionAttributeValues": {
+                  ":s": {"S": "FAILED"}, ":t": {"S.$": "$$.State.EnteredTime"},
+                  ":e": {"S.$": "States.JsonToString($.error)"},
+                  ":srk": {"S.$": "$.error.SkippedRecordsKey"}
+                }
+              },
+              "ResultPath": "$.updateResult",
+              "Next": "IngestionFailed"
+            },
+            "IngestionComplete": {"Type": "Succeed"},
+            "IngestionFailed": {"Type": "Fail", "Error": "IngestionError", "Cause": "Pin report processing failed."}
+          }
+        }
       Tags:
         - Key: Application
           Value: !Ref AppPrefix
-        - Key: Environment
-          Value: !Ref Environment
 
-  # --- IAM Role for Step Functions ---
   StepFunctionsExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -319,44 +458,35 @@ Resources:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
-                Action:
-                  - lambda:InvokeFunction
+                Action: ['lambda:InvokeFunction']
                 Resource: !GetAtt CsvProcessorFunction.Arn
         - PolicyName: DynamoDBTracker
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
-                Action:
-                  - dynamodb:PutItem
-                  - dynamodb:UpdateItem
+                Action: ['dynamodb:PutItem', 'dynamodb:UpdateItem']
                 Resource: !GetAtt UploadTrackerTable.Arn
 
-  # --- EventBridge Rule (S3 -> Step Functions) ---
+  # --- EventBridge Rule ---
   S3UploadRule:
     Type: AWS::Events::Rule
     Properties:
       Name: !Sub '${AppPrefix}-rule-${Environment}'
-      Description: Trigger pin ingestion workflow when CSV uploaded to S3
       State: ENABLED
       EventPattern:
-        source:
-          - aws.s3
-        detail-type:
-          - Object Created
+        source: ['aws.s3']
+        detail-type: ['Object Created']
         detail:
           bucket:
-            name:
-              - !Ref UploadBucket
+            name: [!Ref UploadBucket]
           object:
-            key:
-              - prefix: knowledgebase/
+            key: [{prefix: 'files_to_be_processed/'}]
       Targets:
         - Id: StartIngestionWorkflow
           Arn: !GetAtt IngestionStateMachine.Arn
           RoleArn: !GetAtt EventBridgeExecutionRole.Arn
 
-  # --- IAM Role for EventBridge ---
   EventBridgeExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -374,34 +504,31 @@ Resources:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
-                Action:
-                  - states:StartExecution
+                Action: ['states:StartExecution']
                 Resource: !GetAtt IngestionStateMachine.Arn
 
 Outputs:
   TableName:
     Value: !Ref BlockPinsTable
-    Description: DynamoDB table name
-  TableArn:
-    Value: !GetAtt BlockPinsTable.Arn
   BucketName:
     Value: !Ref UploadBucket
-    Description: S3 bucket for CSV uploads
   LambdaFunctionName:
     Value: !Ref CsvProcessorFunction
-    Description: Lambda function name
+  StreamProducerFunctionName:
+    Value: !Ref StreamProducerFunction
+  AgentBridgeFunctionName:
+    Value: !Ref AgentBridgeFunction
   StateMachineArn:
     Value: !GetAtt IngestionStateMachine.Arn
-    Description: Step Functions state machine ARN
-  StateMachineName:
-    Value: !GetAtt IngestionStateMachine.Name
-    Description: Step Functions state machine name
   UploadTrackerTableName:
     Value: !Ref UploadTrackerTable
-    Description: DynamoDB table tracking upload status and outcomes
+  TaskSummaryTableName:
+    Value: !Ref TaskSummaryTable
+  SummaryQueueUrl:
+    Value: !Ref SummaryQueue
+  SummaryDLQUrl:
+    Value: !Ref SummaryDLQ
   UploadPath:
-    Value: !Sub 's3://${UploadBucket}/knowledgebase/'
-    Description: Upload pin report CSVs here to trigger ingestion workflow
-  ActiveProjectPath:
-    Value: !Sub 's3://${UploadBucket}/active-project/'
-    Description: Active project files (no auto-processing)
+    Value: !Sub 's3://${UploadBucket}/files_to_be_processed/'
+  ProcessedPath:
+    Value: !Sub 's3://${UploadBucket}/files_already_processed/'

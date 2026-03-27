@@ -10,6 +10,7 @@ import json
 import numpy as np
 from typing import List, Dict
 from config.config import Config
+from tools_task_summary import query_task_pins, write_task_summary
 import os
 
 # Load and validate configuration
@@ -348,8 +349,17 @@ IMPORTANT:
 - For questions about inputs, outputs, or block details, use search_knowledge_base ONLY
 - Only use generate_diagram when the user explicitly requests a visual diagram
 - Answer based on the knowledge base search results
-- If no information is found, say so clearly""",
-    'tools': [search_knowledge_base, generate_diagram, export_xml]
+- If no information is found, say so clearly
+
+4. query_task_pins - Query all pins for a (project, task) from the pins DynamoDB table
+   - Used during task summary generation to retrieve pin data
+   - Returns signals_in, signals_out, block_types_used, and a sample of pins
+
+5. write_task_summary - Write a task logic summary to the task-summaries DynamoDB table
+   - Used after analyzing pins to persist the engineering summary
+   - Stores project_id, task, program, signals, block types, and logic_summary""",
+    'tools': [search_knowledge_base, generate_diagram, export_xml,
+              query_task_pins, write_task_summary]
 }
 
 # Add access token if available

@@ -4,20 +4,25 @@ Event-driven ingestion pipeline for Mark VIe control system pin report CSVs. Upl
 
 ## Architecture
 
-![GT Copilot Pin Ingestion Pipeline](docs/architecture.png)
+![Mark VIe Pin Ingestion Pipeline](docs/architecture.png)
 
-**Flow:** S3 (CSV upload to `knowledgebase/`) → EventBridge (Object Created rule) → Step Functions workflow → Lambda (parse CSV, batch write pins) → DynamoDB
+**Flow:** S3 (CSV upload to `files_to_be_processed/`) → EventBridge (Object Created rule) → Step Functions workflow → Lambda (parse CSV, batch write pins) → DynamoDB
 
 **Step Functions Workflow:**
 1. **RecordUploadReceived** — PutItem to tracker table with status `RECEIVED`
 2. **ProcessPinReport** — Invoke Lambda to parse CSV and write pins to DynamoDB
-3. **RecordCompleted / RecordFailed** — UpdateItem on tracker with final status, context, and counts
+3. **ValidateProcessingResult** — Choice state: checks `rows_skipped`, `items_written`, and `statusCode`
+4. **RecordCompleted** — UpdateItem on tracker with `COMPLETED`, row counts, `SourceS3Key`, `ProcessedS3Key`
+5. **BuildProcessingError → RecordFailed** — On data quality issues, records `FAILED` with error details
 
 ## S3 Bucket Structure
 
 | Folder | Purpose | Auto-processing |
 |--------|---------|-----------------|
-| `knowledgebase/` | Pin report CSV uploads | Yes — triggers ingestion workflow |
+| `files_to_be_processed/` | Drop pin report CSVs here to trigger ingestion | Yes — EventBridge triggers workflow |
+| `files_already_processed/` | Successfully processed files moved here by Lambda | No |
+| `failed/unsupported/` | Non-CSV or unparseable files moved here | No |
+| `failed/partial/` | CSVs with skipped rows + `_errors.json` sidecar | No |
 | `active-project/` | Active project files for storage | No |
 
 ## Upload Tracking
@@ -47,11 +52,11 @@ This will:
 
 ```bash
 aws s3 cp data/sample_pins.csv \
-  s3://markvie-kb-138720056246/knowledgebase/sample_pins.csv \
+  s3://markvie-kb-138720056246/files_to_be_processed/sample_pins.csv \
   --profile zuberua-Admin --region us-west-2
 ```
 
-The file will be automatically processed and deleted from `knowledgebase/` after ingestion.
+The file will be automatically processed and moved to `files_already_processed/` after successful ingestion. If the file is unsupported or has skipped rows, it lands in `failed/unsupported/` or `failed/partial/` respectively.
 
 ## Monitor Executions
 
@@ -135,18 +140,20 @@ aws dynamodb scan \
 ```
 dynamodb-block-schema/
 ├── cloudformation/
-│   └── table.yaml          # Full stack: S3, EventBridge, Step Functions, Lambda, DynamoDB, IAM
+│   ├── table.yaml              # Full stack: S3, EventBridge, Step Functions, Lambda, DynamoDB, IAM
+│   └── state-machine.json      # Step Functions definition (standalone reference)
 ├── lambda/
 │   └── csv_processor/
-│       └── handler.py      # CSV parser and DynamoDB batch writer
+│       └── handler.py          # CSV parser and DynamoDB batch writer
 ├── data/
-│   └── sample_pins.csv     # Sample pin report for testing
+│   └── sample_pins.csv         # Sample pin report for testing
 ├── scripts/
-│   └── trace_connection.py # Connection trace utility
+│   ├── deploy.sh               # Build and deploy script
+│   └── trace_connection.py     # Connection trace utility
 ├── docs/
-│   ├── architecture.png    # AWS architecture diagram
-│   └── generate_architecture_diagram.py
-├── deploy.sh               # Build and deploy script
+│   ├── architecture.png        # AWS architecture diagram
+│   ├── generate_architecture_diagram.py
+│   └── SCHEMA_COMPARISON.md    # Schema design comparison
 └── README.md
 ```
 
@@ -159,18 +166,18 @@ See [SCHEMA_COMPARISON.md](../docs/SCHEMA_COMPARISON.md) for full schema compari
 
 ### US-01 Pin Report Upload 
 
-1. Accepts Pin Report uploads through the defined ingestion path — CSV files uploaded to s3://markvie-kb-138720056246/knowledgebase/ automatically trigger the EventBridge → Step Functions → Lambda pipeline. Tested end-to-end.
+1. Accepts Pin Report uploads through the defined ingestion path — CSV files uploaded to s3://markvie-kb-138720056246/files_to_be_processed/ automatically trigger the EventBridge → Step Functions → Lambda pipeline. Tested end-to-end with 300K rows.
 
 
-2. Each upload is associated with project and task context — The Lambda extracts unique systems (project context) and unique tasks (task context) from the CSV data and returns them. The Step Functions RecordCompleted state writes both to the tracker table as ProjectContext and TaskContext fields.
+2. Each upload is associated with project and task context — The Lambda extracts unique systems (project context) and unique tasks (task context) from the CSV data and returns them. The Step Functions RecordCompleted state writes both to the tracker table as ProjectContext and TaskContext fields, along with SourceS3Key and ProcessedS3Key.
 
-3. Upload status and processing outcome are captured for review — The tracker table records status progression (RECEIVED → COMPLETED or FAILED), timestamps, rows parsed, items written, file size, error messages on failure, and the project/task context. The StatusIndex GSI lets you query by status and time range.
+3. Upload status and processing outcome are captured for review — The tracker table records status progression (RECEIVED → COMPLETED or FAILED), timestamps, rows parsed, items written, file size, error messages on failure, and the project/task context. The StatusIndex GSI lets you query by status and time range. The ValidateProcessingResult choice state routes partial failures (rows_skipped > 0) through BuildProcessingError to RecordFailed.
 
 
 ### US-02 Event-Driven Ingestion
 
-1. S3 Object Created event triggers EventBridge — The S3 bucket has EventBridgeEnabled: true, and the EventBridge rule matches Object Created events with prefix: knowledgebase/ on that bucket.
+1. S3 Object Created event triggers EventBridge — The S3 bucket has EventBridgeEnabled: true, and the EventBridge rule matches Object Created events with prefix: files_to_be_processed/ on that bucket.
 
 2. EventBridge starts the Step Functions workflow — The rule's target is the Step Functions state machine ARN, with an IAM role that has states:StartExecution permission.
 
-3. The workflow invokes one processing Lambda for parsing and normalization — The ProcessPinReport state invokes the single csv_processor Lambda, which downloads the CSV from S3, parses it, normalizes the data into the pin-level schema, and batch-writes to DynamoDB. One Lambda, one invocation per upload.
+3. The workflow invokes one processing Lambda for parsing and normalization — The ProcessPinReport state invokes the single csv_processor Lambda, which downloads the CSV from S3, parses it (multi-encoding support, header normalization), and batch-writes to DynamoDB. Successfully processed files are moved to files_already_processed/. Unsupported files go to failed/unsupported/, and CSVs with skipped rows get an _errors.json sidecar in failed/partial/.

@@ -1,0 +1,160 @@
+{
+  "Comment": "Mark VIe pin report ingestion workflow with upload tracking",
+  "StartAt": "RecordUploadReceived",
+  "States": {
+    "RecordUploadReceived": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:putItem",
+      "Parameters": {
+        "TableName": "${TrackerTable}",
+        "Item": {
+          "PK": { "S.$": "States.Format('UPLOAD#{}', $$.Execution.Name)" },
+          "SK": { "S": "META" },
+          "UploadId": { "S.$": "$$.Execution.Name" },
+          "UploadStatus": { "S": "RECEIVED" },
+          "UploadTimestamp": { "S.$": "$$.Execution.StartTime" },
+          "S3Bucket": { "S.$": "$.detail.bucket.name" },
+          "S3Key": { "S.$": "$.detail.object.key" },
+          "FileSize": { "N.$": "States.Format('{}', $.detail.object.size)" }
+        }
+      },
+      "ResultPath": "$.trackerResult",
+      "Next": "ProcessPinReport"
+    },
+    "ProcessPinReport": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${LambdaArn}",
+        "Payload": {
+          "bucket.$": "$.detail.bucket.name",
+          "key.$": "$.detail.object.key",
+          "uploadId.$": "$$.Execution.Name"
+        }
+      },
+      "ResultSelector": {
+        "statusCode.$": "$.Payload.statusCode",
+        "body.$": "$.Payload.body"
+      },
+      "ResultPath": "$.processingResult",
+      "Next": "ValidateProcessingResult",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException"
+          ],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "NormalizeProcessingException"
+        }
+      ]
+    },
+    "ValidateProcessingResult": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Or": [
+            {
+              "Variable": "$.processingResult.body.rows_skipped",
+              "NumericGreaterThan": 0
+            },
+            {
+              "Variable": "$.processingResult.body.items_written",
+              "NumericLessThanPath": "$.processingResult.body.rows_parsed"
+            },
+            {
+              "Not": {
+                "Variable": "$.processingResult.statusCode",
+                "NumericEquals": 200
+              }
+            }
+          ],
+          "Next": "BuildProcessingError"
+        }
+      ],
+      "Default": "RecordCompleted"
+    },
+    "BuildProcessingError": {
+      "Type": "Pass",
+      "Parameters": {
+        "Error": "IngestionDataQualityError",
+        "Cause.$": "States.Format('rows_parsed={}, items_written={}, rows_skipped={}, status_code={}', $.processingResult.body.rows_parsed, $.processingResult.body.items_written, $.processingResult.body.rows_skipped, $.processingResult.statusCode)",
+        "SkippedRecordsKey.$": "$.processingResult.body.flagged_report_key"
+      },
+      "ResultPath": "$.error",
+      "Next": "RecordFailed"
+    },
+    "NormalizeProcessingException": {
+      "Type": "Pass",
+      "Parameters": {
+        "Error": "IngestionProcessingException",
+        "Cause.$": "States.JsonToString($.error)",
+        "SkippedRecordsKey": ""
+      },
+      "ResultPath": "$.error",
+      "Next": "RecordFailed"
+    },
+    "RecordCompleted": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "${TrackerTable}",
+        "Key": {
+          "PK": { "S.$": "States.Format('UPLOAD#{}', $$.Execution.Name)" },
+          "SK": { "S": "META" }
+        },
+        "UpdateExpression": "SET UploadStatus = :s, CompletedAt = :t, RowsParsed = :rp, ItemsWritten = :iw, ProjectContext = :pc, TaskContext = :tc, SourceS3Key = :ssk, ProcessedS3Key = :psk, SkippedRecordsKey = :srk",
+        "ExpressionAttributeValues": {
+          ":s": { "S": "COMPLETED" },
+          ":t": { "S.$": "$$.State.EnteredTime" },
+          ":rp": { "N.$": "States.Format('{}', $.processingResult.body.rows_parsed)" },
+          ":iw": { "N.$": "States.Format('{}', $.processingResult.body.items_written)" },
+          ":pc": { "S.$": "$.processingResult.body.project_context" },
+          ":tc": { "S.$": "$.processingResult.body.task_context" },
+          ":ssk": { "S.$": "$.processingResult.body.file" },
+          ":psk": { "S.$": "$.processingResult.body.processed_key" },
+          ":srk": { "S.$": "$.processingResult.body.flagged_report_key" }
+        }
+      },
+      "ResultPath": "$.updateResult",
+      "Next": "IngestionComplete"
+    },
+    "RecordFailed": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "${TrackerTable}",
+        "Key": {
+          "PK": { "S.$": "States.Format('UPLOAD#{}', $$.Execution.Name)" },
+          "SK": { "S": "META" }
+        },
+        "UpdateExpression": "SET UploadStatus = :s, FailedAt = :t, ErrorMessage = :e, SkippedRecordsKey = :srk",
+        "ExpressionAttributeValues": {
+          ":s": { "S": "FAILED" },
+          ":t": { "S.$": "$$.State.EnteredTime" },
+          ":e": { "S.$": "States.JsonToString($.error)" },
+          ":srk": { "S.$": "$.error.SkippedRecordsKey" }
+        }
+      },
+      "ResultPath": "$.updateResult",
+      "Next": "IngestionFailed"
+    },
+    "IngestionComplete": {
+      "Type": "Succeed"
+    },
+    "IngestionFailed": {
+      "Type": "Fail",
+      "Error": "IngestionError",
+      "Cause": "Pin report processing failed. Check tracker table for details."
+    }
+  }
+}

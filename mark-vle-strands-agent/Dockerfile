@@ -16,6 +16,7 @@ COPY config/ ./config/
 COPY agent.py .
 COPY agentcore_app.py .
 COPY plc_diagram_generator.py .
+COPY tools_task_summary.py .
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1

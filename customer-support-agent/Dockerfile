@@ -12,6 +12,9 @@ COPY agentcore_app.py .
 
 ENV PYTHONUNBUFFERED=1
 ENV AWS_DEFAULT_REGION=us-west-2
+ENV AWS_REGION=us-west-2
+ENV DYNAMODB_TABLE_NAME=markvie-kb-poc
+ENV TASK_SUMMARY_TABLE_NAME=markvie-kb-task-summaries-poc
 
 EXPOSE 8080
 

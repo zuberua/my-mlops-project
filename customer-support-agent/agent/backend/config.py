@@ -13,7 +13,7 @@ class Config:
     # DynamoDB pin knowledge base
     DYNAMODB_TABLE_NAME: str = os.getenv("DYNAMODB_TABLE_NAME", "markvie-kb-poc")
     TASK_SUMMARY_TABLE_NAME: str = os.getenv("TASK_SUMMARY_TABLE_NAME", "markvie-kb-task-summaries-poc")
-    AWS_REGION: str = os.getenv("AWS_REGION", "us-west-2")
+    AWS_REGION: str = os.getenv("DYNAMODB_REGION", os.getenv("AWS_REGION", "us-west-2"))
 
     @classmethod
     def validate(cls) -> None:

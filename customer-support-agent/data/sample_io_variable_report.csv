@@ -1,0 +1,11 @@
+Device Tag,Connected Variable,Signal Type,IO Type,Module,Channel,Description
+33TF7,d_33tf7,DI,Input,PDIO,CH01,Temperature Switch 33TF7 - Gas Turbine Exhaust
+33TF9,d_33tf9,DI,Input,PDIO,CH02,Temperature Switch 33TF9 - Gas Turbine Exhaust
+33TF4,d_33tf4,DI,Input,PDIO,CH03,Temperature Switch 33TF4 - Gas Turbine Bearing
+33TF6,d_33tf6,DI,Input,PDIO,CH04,Temperature Switch 33TF6 - Gas Turbine Bearing
+96DVPT1,a_96dvpt1,AI,Input,PAIO,CH01,DVP Cabinet Temperature Sensor 96DVPT1
+30TF_ALM,,DO,Output,PDIO,CH10,Temperature Fault Alarm Output
+3TFSTCK,,DO,Output,PDIO,CH11,Temperature Switch Stuck Alarm
+96DVPT1_A,,DO,Output,PDIO,CH12,DVP Cabinet Temperature High Alarm
+3TVP_SCX,,DO,Output,PDIO,CH13,TVP Scan Exception Flag
+3PGVLV_WW,,DO,Output,PDIO,CH14,Purge Valve Watchdog Write

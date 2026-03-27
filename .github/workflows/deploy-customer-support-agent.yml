@@ -1,0 +1,122 @@
+name: Deploy Customer Support Agent to AgentCore
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'customer-support-agent/**'
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: markvie-customer-support
+  AGENT_NAME: markvie_customer_support
+  RUNTIME_ARN: arn:aws:bedrock-agentcore:us-east-1:138720056246:runtime/markvie_customer_support-0qxtkw8xSN
+
+jobs:
+  build-and-push:
+    name: Build and Push to ECR
+    runs-on: ubuntu-latest
+    outputs:
+      IMAGE_URI: ${{ steps.output.outputs.IMAGE_URI }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        working-directory: ./customer-support-agent
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker buildx build \
+            --platform linux/arm64 \
+            --tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            --tag $ECR_REGISTRY/$ECR_REPOSITORY:latest \
+            --push \
+            .
+          echo "IMAGE_URI=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+        id: output
+
+  deploy-to-agentcore:
+    name: Deploy to AgentCore
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: pip install boto3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy to AgentCore
+        env:
+          IMAGE_URI: ${{ needs.build-and-push.outputs.IMAGE_URI }}
+          EXECUTION_ROLE_ARN: ${{ secrets.AGENTCORE_EXECUTION_ROLE_ARN }}
+        run: |
+          python3 -c "
+          import boto3, sys
+          client = boto3.client('bedrock-agentcore-control', region_name='${{ env.AWS_REGION }}')
+          
+          # Find existing agent
+          agents = client.list_agent_runtimes()
+          agent_id = None
+          for a in agents.get('agentRuntimes', []):
+              if a['agentRuntimeName'] == '${{ env.AGENT_NAME }}':
+                  agent_id = a['agentRuntimeId']
+                  break
+          
+          if agent_id:
+              print(f'Updating agent {agent_id}...')
+              resp = client.update_agent_runtime(
+                  agentRuntimeId=agent_id,
+                  agentRuntimeArtifact={'containerConfiguration': {'containerUri': '${{ env.IMAGE_URI }}'}},
+                  networkConfiguration={'networkMode': 'PUBLIC'},
+                  roleArn='${{ env.EXECUTION_ROLE_ARN }}',
+              )
+          else:
+              print('Creating new agent...')
+              resp = client.create_agent_runtime(
+                  agentRuntimeName='${{ env.AGENT_NAME }}',
+                  agentRuntimeArtifact={'containerConfiguration': {'containerUri': '${{ env.IMAGE_URI }}'}},
+                  networkConfiguration={'networkMode': 'PUBLIC'},
+                  roleArn='${{ env.EXECUTION_ROLE_ARN }}',
+              )
+          
+          print(f'Agent ARN: {resp[\"agentRuntimeArn\"]}')
+          print(f'Agent ID: {resp[\"agentRuntimeId\"]}')
+          "
+
+      - name: Summary
+        if: success()
+        run: |
+          echo "## ✅ Customer Support Agent Deployed" >> $GITHUB_STEP_SUMMARY
+          echo "- **Agent:** ${{ env.AGENT_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image:** ${{ needs.build-and-push.outputs.IMAGE_URI }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY

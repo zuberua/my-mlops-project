@@ -1,0 +1,17 @@
+Section,Variable,Where Used,Description
+Report Header,,,
+CodingPracticeReport for G1 - ProjectSpecific Custom Program,,,
+Generated: 2026-03-01,,,
+,,,
+Unwritten Variables,,,
+Variable,Where Used,Description
+Custom.d_33tf7,MOVE_6.SRC (ProjectSpecific),Temperature Switch 33TF7 input - no standard logic assigned
+Custom.d_33tf9,MOVE_7.SRC (ProjectSpecific),Temperature Switch 33TF9 input - no standard logic assigned
+Custom.d_33tf4,MOVE_8.SRC (ProjectSpecific),Temperature Switch 33TF4 input - no standard logic assigned
+Custom.d_33tf6,MOVE_9.SRC (ProjectSpecific),Temperature Switch 33TF6 input - no standard logic assigned
+Custom.a_96dvpt1,COMPARE_2.IN1 (ProjectSpecific),DVP Cabinet Temperature analog input - no standard logic assigned
+,,,
+Multiple Writes,,,
+Variable,Where Used,Description
+L33TF7C,MOVE_6.DEST / RUNG_2.B,Written by MOVE_6 and read by RUNG_2
+L33TF9C,MOVE_7.DEST / RUNG_2.C,Written by MOVE_7 and read by RUNG_2

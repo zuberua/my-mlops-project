@@ -1,0 +1,13 @@
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+.bedrock_agentcore.yaml
+.bedrock_agentcore/
+agent/frontend/node_modules/
+agent/frontend/build/
+data/
+docs/
+output/
+deploy/
+*.zip

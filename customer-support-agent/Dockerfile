@@ -19,3 +19,4 @@ ENV TASK_SUMMARY_TABLE_NAME=markvie-kb-task-summaries-poc
 EXPOSE 8080
 
 CMD ["python", "agentcore_app.py"]
+# trigger rebuild

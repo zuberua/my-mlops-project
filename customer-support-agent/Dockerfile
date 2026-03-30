@@ -1,22 +1,16 @@
-FROM python:3.13-slim
+FROM public.ecr.aws/docker/library/python:3.13-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y gcc && rm -rf /var/lib/apt/lists/*
+COPY requirements.txt requirements.txt
+RUN pip install -r requirements.txt
+RUN pip install aws-opentelemetry-distro>=0.10.1
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY agent/ ./agent/
-COPY agentcore_app.py .
-
-ENV PYTHONUNBUFFERED=1
-ENV AWS_DEFAULT_REGION=us-west-2
-ENV DYNAMODB_REGION=us-west-2
-ENV DYNAMODB_TABLE_NAME=markvie-kb-poc
-ENV TASK_SUMMARY_TABLE_NAME=markvie-kb-task-summaries-poc
+RUN useradd -m -u 1000 bedrock_agentcore
+USER bedrock_agentcore
 
 EXPOSE 8080
 
-CMD ["bedrock-agentcore-runtime", "agentcore_app:app"]
-# trigger rebuild
+COPY . .
+
+CMD ["opentelemetry-instrument", "python", "-m", "agentcore_app"]

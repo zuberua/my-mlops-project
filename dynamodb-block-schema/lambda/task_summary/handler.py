@@ -1,12 +1,12 @@
 """SQS → AgentCore bridge Lambda.
 
 Triggered by SQS. Receives a (project, task) PK and invokes the AgentCore
-agent to generate and store the task logic summary. All logic (querying pins,
-generating summary, writing to DynamoDB) is handled by the agent's tools.
+agent to generate and store the task logic summary.
 """
 
 import json
 import os
+import uuid
 
 import boto3
 
@@ -15,11 +15,11 @@ AGENT_REGION = os.environ.get("AGENT_REGION", "us-east-1")
 PINS_TABLE = os.environ.get("TABLE_NAME", "")
 SUMMARY_TABLE = os.environ.get("TASK_SUMMARY_TABLE_NAME", "")
 
+agent_core_client = boto3.client("bedrock-agentcore", region_name=AGENT_REGION)
+
 
 def handler(event, context):
     """Process SQS messages and invoke AgentCore agent for each."""
-    client = boto3.client("bedrock-agentcore", region_name=AGENT_REGION)
-
     results = []
     for record in event.get("Records", []):
         body = json.loads(record["body"])
@@ -38,46 +38,49 @@ def handler(event, context):
             f"  - pk: PROJECT#{project_id}#TASK#{task}\n"
             f"  - project_id: {project_id}\n"
             f"  - task: {task}\n"
-            f"  - program: {program}\n"
-            f"  - pins_table: {PINS_TABLE}\n"
-            f"  - summary_table: {SUMMARY_TABLE}\n"
-            f"  - source_pk: {pk}\n\n"
+            f"  - program: {program}\n\n"
             f"Include signals_in, signals_out, block_types_used, row_count, "
             f"and a concise engineering logic_summary describing the signal flow."
         )
 
+        payload = json.dumps({"prompt": prompt})
+        session_id = str(uuid.uuid4())
+
         try:
-            response = client.invoke_agent_runtime(
+            response = agent_core_client.invoke_agent_runtime(
                 agentRuntimeArn=AGENT_RUNTIME_ARN,
-                payload=json.dumps({"prompt": prompt}).encode("utf-8"),
-                contentType="application/json",
-                accept="application/json",
+                runtimeSessionId=session_id,
+                payload=payload,
             )
 
-            # Read streaming response
-            body_bytes = b""
-            event_stream = response.get("response")
-            if event_stream:
-                try:
-                    for evt in event_stream:
-                        if isinstance(evt, dict):
-                            if "chunk" in evt:
-                                chunk_data = evt["chunk"].get("bytes", b"")
-                                if isinstance(chunk_data, str):
-                                    chunk_data = chunk_data.encode("utf-8")
-                                body_bytes += chunk_data
-                        elif isinstance(evt, bytes):
-                            body_bytes += evt
-                except Exception as stream_err:
-                    print(f"Stream read error for {pk}: {stream_err}")
+            # Process response based on content type
+            raw_response = ""
+            content_type = response.get("contentType", "")
 
-            agent_response = body_bytes.decode("utf-8").strip() if body_bytes else "No response"
-            print(f"Agent response for {pk}: {agent_response[:200]}...")
+            if "text/event-stream" in content_type:
+                content = []
+                for line in response["response"].iter_lines(chunk_size=10):
+                    if line:
+                        line = line.decode("utf-8")
+                        if line.startswith("data: "):
+                            line = line[6:]
+                            content.append(line)
+                raw_response = "\n".join(content)
+
+            elif content_type == "application/json":
+                content = []
+                for chunk in response.get("response", []):
+                    content.append(chunk.decode("utf-8"))
+                raw_response = "".join(content)
+
+            else:
+                raw_response = str(response)
+
+            print(f"Agent response for {pk}: {raw_response[:200]}...")
             results.append({"pk": pk, "status": "completed"})
 
         except Exception as e:
             print(f"AgentCore invocation failed for {pk}: {e}")
             results.append({"pk": pk, "status": "failed", "error": str(e)})
-            # Don't raise — let SQS retry via visibility timeout
 
     return {"results": results}

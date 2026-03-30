@@ -47,14 +47,35 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
+          # Build the image (load locally, not push)
           docker buildx build \
             --platform linux/arm64 \
             --tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
             --tag $ECR_REGISTRY/$ECR_REPOSITORY:latest \
-            --push \
+            --load \
             .
-          echo "IMAGE_URI=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+          
+          echo "Built image: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          docker images | grep $ECR_REPOSITORY
+
+      - name: Push to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          echo "Pushing $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "Pushing $ECR_REGISTRY/$ECR_REPOSITORY:latest"
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "Push complete"
+
+      - name: Output image URI
         id: output
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          echo "IMAGE_URI=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
   deploy-to-agentcore:
     name: Deploy to AgentCore

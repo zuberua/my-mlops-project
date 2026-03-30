@@ -18,5 +18,5 @@ ENV TASK_SUMMARY_TABLE_NAME=markvie-kb-task-summaries-poc
 
 EXPOSE 8080
 
-CMD ["python", "agentcore_app.py"]
+CMD ["bedrock-agentcore-runtime", "agentcore_app:app"]
 # trigger rebuild
